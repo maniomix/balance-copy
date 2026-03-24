@@ -1,0 +1,51 @@
+# ============================================================
+# CENTMOND .gitignore
+# ============================================================
+
+# -- Secrets & Configuration --
+Config.plist
+Supabase.plist
+GoogleService-Info.plist
+*.xcconfig
+!*.xcconfig.template
+.env
+.env.*
+
+# -- Xcode --
+build/
+DerivedData/
+*.xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+xcuserdata/
+
+# -- SPM --
+.build/
+Package.resolved
+
+# -- CocoaPods --
+Pods/
+
+# -- macOS --
+.DS_Store
+*.swp
+*~
+._*
+
+# -- IDE --
+*.pbxuser
+!default.pbxuser
+*.perspectivev3
+!default.perspectivev3
+
+# -- Archives & Build Products --
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.app
+*.xcarchive
+
+# -- Temporary Files --
+*.tmp
+*.bak
