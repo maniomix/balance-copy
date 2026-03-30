@@ -42,12 +42,13 @@ class ReviewEngine: ObservableObject {
     @Published var isLoading = false
     @Published var lastAnalyzedAt: Date?
 
-    // Dismissed item IDs persist across app launches so they don't reappear
-    private var dismissedTransactionKeys: Set<String> = [] {
-        didSet { saveDismissedKeys() }
-    }
+    // Dismissed stable keys persist across app launches so items don't reappear.
+    // Uses an ordered array internally so the cap drops oldest entries, not arbitrary ones.
+    private var dismissedStableKeys: Set<String> = []
+    private var dismissedStableKeysOrdered: [String] = []
 
     private static let dismissedKeysKey = "review.dismissed_keys"
+    private static let maxDismissedKeys = 500
 
     private init() {
         loadDismissedKeys()
@@ -55,13 +56,26 @@ class ReviewEngine: ObservableObject {
 
     private func loadDismissedKeys() {
         let arr = UserDefaults.standard.stringArray(forKey: Self.dismissedKeysKey) ?? []
-        dismissedTransactionKeys = Set(arr)
+        dismissedStableKeysOrdered = arr
+        dismissedStableKeys = Set(arr)
     }
 
     private func saveDismissedKeys() {
-        // Cap at 500 entries to avoid unbounded growth
-        let capped = Array(dismissedTransactionKeys.suffix(500))
-        UserDefaults.standard.set(capped, forKey: Self.dismissedKeysKey)
+        // Cap at maxDismissedKeys — drop oldest entries (front of array)
+        if dismissedStableKeysOrdered.count > Self.maxDismissedKeys {
+            let overflow = dismissedStableKeysOrdered.count - Self.maxDismissedKeys
+            let dropped = dismissedStableKeysOrdered.prefix(overflow)
+            dropped.forEach { dismissedStableKeys.remove($0) }
+            dismissedStableKeysOrdered = Array(dismissedStableKeysOrdered.dropFirst(overflow))
+        }
+        UserDefaults.standard.set(dismissedStableKeysOrdered, forKey: Self.dismissedKeysKey)
+    }
+
+    private func addDismissedKey(_ key: String) {
+        guard !dismissedStableKeys.contains(key) else { return }
+        dismissedStableKeys.insert(key)
+        dismissedStableKeysOrdered.append(key)
+        saveDismissedKeys()
     }
 
     // MARK: - Summary Stats
@@ -159,73 +173,95 @@ class ReviewEngine: ObservableObject {
             )
         }.value
 
-        // Merge: keep manually resolved items, replace pending auto-detected ones
-        let resolvedIds = Set(items.filter { $0.status != .pending }.map { $0.id })
-        let resolvedItems = items.filter { resolvedIds.contains($0.id) }
+        // Current transaction IDs for ghost pruning
+        let currentTxIds = Set(store.transactions.map { $0.id })
 
-        // Filter out items for transactions the user already dismissed
-        let newItems = result.filter { item in
-            let key = item.transactionIds.map { $0.uuidString }.sorted().joined(separator: "|")
-            return !dismissedTransactionKeys.contains(key)
+        // Filter out dismissed items by stableKey
+        let newItems = result.filter { !dismissedStableKeys.contains($0.stableKey) }
+
+        // Deduplicate by stableKey — keep the first occurrence of each
+        var seenKeys = Set<String>()
+        let deduped = newItems.filter { item in
+            guard !seenKeys.contains(item.stableKey) else { return false }
+            seenKeys.insert(item.stableKey)
+            return true
         }
 
-        self.items = resolvedItems + newItems
+        // Prune: only keep items whose target transactions still exist
+        let valid = deduped.filter { item in
+            item.transactionIds.contains { currentTxIds.contains($0) }
+        }
+
+        self.items = valid
         self.lastAnalyzedAt = Date()
         self.isLoading = false
     }
 
     // MARK: - Actions
 
-    /// Resolve an item (action was taken)
+    /// Resolve an item (action was taken).
+    /// Persists the stable key so re-analysis won't recreate the same item.
     func resolve(_ item: ReviewItem) {
         guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
         items[idx].status = .resolved
         items[idx].resolvedAt = Date()
         AnalyticsManager.shared.track(.reviewItemResolved(type: item.type.rawValue))
 
-        // Persist so re-analysis won't recreate the same item
-        let key = item.transactionIds.map { $0.uuidString }.sorted().joined(separator: "|")
-        dismissedTransactionKeys.insert(key)
+        addDismissedKey(item.stableKey)
+        // Remove from active list — it's now persisted in dismissedStableKeys
+        items.remove(at: idx)
     }
 
-    /// Dismiss an item (user says it's fine)
+    /// Dismiss an item (user says it's fine).
+    /// Persists the stable key so it won't reappear.
     func dismiss(_ item: ReviewItem) {
         guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
         items[idx].status = .dismissed
         items[idx].resolvedAt = Date()
         AnalyticsManager.shared.track(.reviewItemResolved(type: "dismissed_\(item.type.rawValue)"))
 
-        // Remember this so it doesn't reappear
-        let key = item.transactionIds.map { $0.uuidString }.sorted().joined(separator: "|")
-        dismissedTransactionKeys.insert(key)
+        addDismissedKey(item.stableKey)
+        // Remove from active list — it's now persisted in dismissedStableKeys
+        items.remove(at: idx)
     }
 
-    /// Assign category to a transaction
+    /// Assign category to a transaction.
+    /// Safe no-op if target transactions no longer exist.
     func assignCategory(item: ReviewItem, category: Category, store: inout Store) {
+        var mutated = false
         for txId in item.transactionIds {
             if let idx = store.transactions.firstIndex(where: { $0.id == txId }) {
                 store.transactions[idx].category = category
                 store.transactions[idx].lastModified = Date()
+                mutated = true
+            }
+        }
+        if !mutated {
+            SecureLogger.info("ReviewEngine.assignCategory: no target transactions found, resolving as no-op")
+        }
+        resolve(item)
+    }
+
+    /// Mark transactions as duplicates (remove all but the first).
+    /// Only removes transactions that still exist; safe no-op for missing ones.
+    func markDuplicate(item: ReviewItem, store: inout Store) {
+        // Keep the first transaction, remove the rest
+        let idsToRemove = Array(item.transactionIds.dropFirst())
+        for txId in idsToRemove {
+            if store.transactions.contains(where: { $0.id == txId }) {
+                store.transactions.removeAll { $0.id == txId }
+                store.trackDeletion(of: txId)
             }
         }
         resolve(item)
     }
 
-    /// Mark transactions as duplicates (remove all but the first)
-    func markDuplicate(item: ReviewItem, store: inout Store) {
-        // Keep the first transaction, remove the rest
-        let idsToRemove = Array(item.transactionIds.dropFirst())
-        for txId in idsToRemove {
-            store.transactions.removeAll { $0.id == txId }
-            store.deletedTransactionIds.append(txId.uuidString)
-        }
-        resolve(item)
-    }
-
-    /// Create a recurring transaction from a candidate
+    /// Create a recurring transaction from a candidate.
+    /// Safe no-op if the source transaction no longer exists.
     func createRecurring(item: ReviewItem, store: inout Store) {
         guard let firstTxId = item.transactionIds.first,
               let tx = store.transactions.first(where: { $0.id == firstTxId }) else {
+            SecureLogger.info("ReviewEngine.createRecurring: source transaction missing, resolving as no-op")
             resolve(item)
             return
         }
@@ -243,13 +279,19 @@ class ReviewEngine: ObservableObject {
         resolve(item)
     }
 
-    /// Normalize merchant names across transactions
+    /// Normalize merchant names across transactions.
+    /// Safe no-op if target transactions no longer exist.
     func normalizeMerchant(item: ReviewItem, normalizedName: String, store: inout Store) {
+        var mutated = false
         for txId in item.transactionIds {
             if let idx = store.transactions.firstIndex(where: { $0.id == txId }) {
                 store.transactions[idx].note = normalizedName
                 store.transactions[idx].lastModified = Date()
+                mutated = true
             }
+        }
+        if !mutated {
+            SecureLogger.info("ReviewEngine.normalizeMerchant: no target transactions found, resolving as no-op")
         }
         resolve(item)
     }
@@ -393,7 +435,7 @@ class ReviewEngine: ObservableObject {
             if group.count >= 2 {
                 let ids = group.map { $0.id }
                 ids.forEach { processed.insert($0) }
-                let groupId = UUID()
+                let groupId = UUID() // Not used for identity — stableKey handles dedup
                 let names = group.map { $0.note.isEmpty ? $0.category.title : $0.note }
                 let nameStr = names.first ?? "transaction"
 

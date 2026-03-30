@@ -8,19 +8,23 @@ import Combine
 //
 // Deterministic, transparent forecasting for personal finance.
 //
+// IMPORTANT — base metric semantics:
+// All projections are BUDGET-BASED, NOT cash/account-balance-based.
+// The engine does NOT read real account balances from AccountManager.
+// "Remaining" means (budget + income - spending), not money-in-bank.
+//
 // Inputs:
-//   - Current account balances (liquid assets only)
+//   - Monthly budget (user-set, or fallback to avg income)
 //   - Recurring transactions (upcoming bills/subscriptions)
-//   - Budget plans (monthly budgets)
 //   - Historical spending trends (3-month average)
 //   - Historical income (3-month average)
 //   - Active goal contributions
 //
 // Outputs:
-//   - Projected balances at 30/60/90 day horizons
-//   - Safe-to-spend amount
+//   - Projected budget remaining at end-of-month and 30/60/90 day horizons
+//   - Safe-to-spend amount (budget remaining minus reserved obligations)
 //   - Risk level (safe / caution / high risk)
-//   - Day-by-day forecast timeline
+//   - Day-by-day budget-remaining timeline
 //
 // All amounts are in cents (Int) for precision.
 // ============================================================
@@ -38,7 +42,7 @@ class ForecastEngine: ObservableObject {
     // MARK: - Main Calculation
 
     /// Generate a complete forecast from current app state.
-    /// Call this whenever data changes (transactions, budgets, accounts).
+    /// Call this whenever data changes (transactions, budgets, recurring transactions).
     func generate(store: Store) async {
         isLoading = true
 
@@ -199,7 +203,7 @@ class ForecastEngine: ObservableObject {
             budgetIsMissing = true
         }
 
-        // ─── Step 5b: Projected end-of-month balance ───
+        // ─── Step 5b: Projected end-of-month budget remaining ───
 
         let projectedMonthSpend: Int
         if isPastMonth {
@@ -244,10 +248,17 @@ class ForecastEngine: ObservableObject {
         // Detect overdue bills (due before today but still in upcoming list)
         let overdueBillCount = upcomingBills.filter { $0.dueDate < realToday }.count
 
+        // Filter bills to month-end for safe-to-spend calculation.
+        // upcomingBills spans a 30-day rolling window which may cross into next month,
+        // but safe-to-spend is labeled "this month" so only reserve bills due this month.
+        let monthEnd = cal.date(byAdding: .day, value: -1,
+            to: cal.date(byAdding: .month, value: 1, to: monthStart)!)!
+        let billsDueThisMonth = upcomingBills.filter { $0.dueDate <= monthEnd }
+
         let safeToSpend = computeSafeToSpend(
             currentRemaining: currentRemaining,
             daysRemaining: daysRemaining,
-            upcomingBills: upcomingBills,
+            upcomingBills: billsDueThisMonth,
             monthlyGoalContributions: monthlyGoalContributions,
             budget: budget,
             budgetIsMissing: budgetIsMissing
@@ -456,7 +467,7 @@ class ForecastEngine: ObservableObject {
     ///   = safe_to_spend
     ///
     /// Then divide by days remaining to get daily safe amount.
-    nonisolated private static func computeSafeToSpend(
+    nonisolated static func computeSafeToSpend(
         currentRemaining: Int,
         daysRemaining: Int,
         upcomingBills: [UpcomingBill],
@@ -465,9 +476,8 @@ class ForecastEngine: ObservableObject {
         budgetIsMissing: Bool
     ) -> SafeToSpend {
 
-        // Upcoming bills due within the remaining days
+        // Sum of bills due within the selected month (pre-filtered by caller)
         let billsThisMonth = upcomingBills
-            .prefix(20) // already filtered in computeRecurringExpenses
             .reduce(0) { $0 + $1.amount }
 
         // Goal contributions remaining for this month (assume not yet contributed)
@@ -565,7 +575,8 @@ class ForecastEngine: ObservableObject {
 
     // MARK: - Timeline
 
-    /// Daily balance projection for chart
+    /// Daily budget-remaining projection for chart.
+    /// NOTE: startBudgetRemaining is (budget + income - spent), NOT an account balance.
     nonisolated private static func computeTimeline(
         startBalance: Int,
         dailyExpense: Int,
@@ -598,7 +609,7 @@ class ForecastEngine: ObservableObject {
 
             points.append(ForecastPoint(
                 date: date,
-                balance: balance,
+                budgetRemaining: balance,
                 dayIndex: i
             ))
         }
@@ -607,7 +618,7 @@ class ForecastEngine: ObservableObject {
     }
 
     /// Build a timeline from actual transactions for a past (completed) month.
-    /// Shows how the balance changed day by day based on real data.
+    /// Shows how budget remaining changed day by day based on real spending data.
     nonisolated private static func computePastTimeline(
         transactions: [Transaction],
         budget: Int,
@@ -644,7 +655,7 @@ class ForecastEngine: ObservableObject {
             guard let date = cal.date(byAdding: .day, value: day - 1, to: monthStart) else { continue }
             points.append(ForecastPoint(
                 date: date,
-                balance: balance,
+                budgetRemaining: balance,
                 dayIndex: day - 1
             ))
         }
@@ -688,12 +699,16 @@ class ForecastEngine: ObservableObject {
 // MARK: - Data Models
 // ============================================================
 
+/// All projection values are BUDGET-BASED (budget + income - spending).
+/// They do NOT represent real account/cash balances.
 struct ForecastResult {
     // Current state
     let spentThisMonth: Int
     let incomeThisMonth: Int
     let budget: Int
     let budgetIsMissing: Bool
+    /// Budget remaining = budget + incomeThisMonth - spentThisMonth.
+    /// This is NOT a bank/account balance.
     let currentRemaining: Int
     let daysRemainingInMonth: Int
     let dayOfMonth: Int
@@ -713,10 +728,14 @@ struct ForecastResult {
     // Goals
     let monthlyGoalContributions: Int
 
-    // Projections
+    // Budget-based projections (NOT account balance projections)
+    /// Projected budget remaining at end of the selected month.
     let projectedMonthEnd: Int
+    /// Projected budget remaining 30 days out.
     let projected30Day: Int
+    /// Projected budget remaining 60 days out.
     let projected60Day: Int
+    /// Projected budget remaining 90 days out.
     let projected90Day: Int
 
     // Safe to spend
@@ -726,7 +745,7 @@ struct ForecastResult {
     // Data quality
     let dataConfidence: DataConfidence
 
-    // Timeline (day-by-day for chart)
+    // Timeline — daily budget-remaining projection for chart
     let timeline: [ForecastPoint]
 
     // Top spending categories
@@ -812,7 +831,8 @@ struct UpcomingBill: Identifiable {
 struct ForecastPoint: Identifiable {
     let id = UUID()
     let date: Date
-    let balance: Int
+    /// Budget remaining projected for this day. NOT an account balance.
+    let budgetRemaining: Int
     let dayIndex: Int
 }
 
@@ -848,5 +868,121 @@ enum RiskLevel {
         case .caution: return DS.Colors.warning
         case .highRisk: return DS.Colors.danger
         }
+    }
+}
+
+// ============================================================
+// MARK: - Household Forecast
+// ============================================================
+//
+// Combines individual forecasts with household shared data
+// to produce a unified "Our Finances" view.
+//
+// ============================================================
+
+struct HouseholdForecastResult {
+    let myForecast: ForecastResult
+    let combinedSafeToSpend: Int              // my safe + shared budget remaining
+    let combinedSafePerDay: Int
+    let sharedBudgetTotal: Int                // household shared budget
+    let sharedSpentThisMonth: Int             // total shared spending
+    let sharedRemaining: Int                  // shared budget - shared spent
+    let myContributionRatio: Double           // 0.0 – 1.0 (my share of shared expenses)
+    let sharedBillsThisMonth: Int             // shared recurring costs
+    let sharedGoalContributions: Int          // reserved for shared goals
+    let combinedRiskLevel: RiskLevel          // worst of individual + shared
+    let partnerName: String
+}
+
+extension ForecastEngine {
+
+    /// Generate a household-aware forecast combining personal and shared finances.
+    @MainActor
+    func computeHousehold(store: Store) -> HouseholdForecastResult? {
+        guard let myForecast = forecast else { return nil }
+
+        let hm = HouseholdManager.shared
+        guard let household = hm.household, household.partner != nil else { return nil }
+
+        let cal = Calendar.current
+        let y = cal.component(.year, from: store.selectedMonth)
+        let m = cal.component(.month, from: store.selectedMonth)
+        let monthKey = String(format: "%04d-%02d", y, m)
+        let userId = household.createdBy // current user
+
+        // Shared budget for this month
+        let sharedBudget = hm.sharedBudget(for: monthKey)
+        let sharedBudgetTotal = sharedBudget?.totalAmount ?? 0
+
+        // Shared spending this month
+        let monthSplits = hm.splitExpenses.filter { expense in
+            let expMonth = cal.component(.month, from: expense.date)
+            let expYear = cal.component(.year, from: expense.date)
+            return expMonth == m && expYear == y
+        }
+        let sharedSpentThisMonth = monthSplits.reduce(0) { $0 + $1.amount }
+        let sharedRemaining = max(0, sharedBudgetTotal - sharedSpentThisMonth)
+
+        // My contribution ratio (what % of shared expenses I paid)
+        let myPaidAmount = monthSplits
+            .filter { $0.paidBy.lowercased() == userId.lowercased() }
+            .reduce(0) { $0 + $1.amount }
+        let myContributionRatio = sharedSpentThisMonth > 0
+            ? Double(myPaidAmount) / Double(sharedSpentThisMonth)
+            : 0.5
+
+        // Shared goals contribution
+        let sharedGoalContributions = hm.sharedGoals
+            .filter { !$0.isCompleted }
+            .reduce(0) { total, goal in
+                let monthly = goal.targetAmount > 0
+                    ? goal.remainingAmount / max(1, 6)  // estimate 6-month horizon
+                    : 0
+                return total + monthly
+            }
+
+        // Combined safe-to-spend: my personal + my share of shared remaining
+        let myShareOfShared = Int(Double(sharedRemaining) * myContributionRatio)
+        let combinedSafe = myForecast.safeToSpend.totalAmount + myShareOfShared
+        let combinedPerDay = myForecast.daysRemainingInMonth > 0
+            ? combinedSafe / myForecast.daysRemainingInMonth
+            : 0
+
+        // Combined risk: worst of personal risk and shared budget pressure
+        let sharedRisk: RiskLevel
+        if sharedBudgetTotal > 0 {
+            let sharedRatio = Double(sharedSpentThisMonth) / Double(sharedBudgetTotal)
+            if sharedRatio >= 1.0 { sharedRisk = .highRisk }
+            else if sharedRatio >= 0.8 { sharedRisk = .caution }
+            else { sharedRisk = .safe }
+        } else {
+            sharedRisk = .safe
+        }
+        let combinedRisk: RiskLevel = {
+            let severity: (RiskLevel) -> Int = { level in
+                switch level {
+                case .safe: return 0
+                case .caution: return 1
+                case .highRisk: return 2
+                }
+            }
+            return severity(myForecast.riskLevel) >= severity(sharedRisk)
+                ? myForecast.riskLevel
+                : sharedRisk
+        }()
+
+        return HouseholdForecastResult(
+            myForecast: myForecast,
+            combinedSafeToSpend: combinedSafe,
+            combinedSafePerDay: combinedPerDay,
+            sharedBudgetTotal: sharedBudgetTotal,
+            sharedSpentThisMonth: sharedSpentThisMonth,
+            sharedRemaining: sharedRemaining,
+            myContributionRatio: myContributionRatio,
+            sharedBillsThisMonth: 0,  // TODO: compute from shared recurring transactions
+            sharedGoalContributions: sharedGoalContributions,
+            combinedRiskLevel: combinedRisk,
+            partnerName: household.partner?.displayName ?? "Partner"
+        )
     }
 }

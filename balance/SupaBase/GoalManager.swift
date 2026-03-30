@@ -111,6 +111,14 @@ class GoalManager: ObservableObject {
                 .execute()
 
             await fetchGoals()
+
+            // Notify so transaction references can be cleaned up
+            NotificationCenter.default.post(
+                name: .goalDidDelete,
+                object: nil,
+                userInfo: ["goalId": goal.id]
+            )
+
             return true
         } catch {
             errorMessage = AppConfig.shared.safeErrorMessage(
@@ -155,6 +163,7 @@ class GoalManager: ObservableObject {
             return true
         } catch {
             errorMessage = AppConfig.shared.safeErrorMessage(detail: error.localizedDescription)
+            SecureLogger.error("Goal contribution failed", error)
             return false
         }
     }
@@ -189,6 +198,7 @@ class GoalManager: ObservableObject {
             return true
         } catch {
             errorMessage = AppConfig.shared.safeErrorMessage(detail: error.localizedDescription)
+            SecureLogger.error("Goal withdrawal failed", error)
             return false
         }
     }

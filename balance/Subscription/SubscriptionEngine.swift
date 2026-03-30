@@ -73,18 +73,21 @@ class SubscriptionEngine: ObservableObject {
             Self.detect(transactions: transactions, existingManual: existing)
         }.value
 
-        // Apply persisted status overrides to re-detected subscriptions
+        // Apply persisted status overrides to re-detected subscriptions.
+        // Uses normalizeMerchant() for key consistency with detection grouping.
         var subs = result.subscriptions
         for i in subs.indices {
-            let merchantKey = subs[i].merchantName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            let merchantKey = Self.normalizeMerchant(subs[i].merchantName)
             if let overrideRaw = statusOverrides[merchantKey],
                let override = SubscriptionStatus(rawValue: overrideRaw) {
                 subs[i].status = override
             }
         }
 
-        // Merge recurring transactions as subscriptions
-        let recurringAsSubs = Self.convertRecurringToSubscriptions(store.recurringTransactions, existingIds: Set(subs.map { $0.merchantName.lowercased() }))
+        // Merge recurring transactions as subscriptions.
+        // Use normalizeMerchant() for both sides to ensure consistent dedup.
+        let existingNormalized = Set(subs.map { Self.normalizeMerchant($0.merchantName) })
+        let recurringAsSubs = Self.convertRecurringToSubscriptions(store.recurringTransactions, existingNormalizedNames: existingNormalized)
         subs.append(contentsOf: recurringAsSubs)
 
         self.subscriptions = subs
@@ -123,13 +126,13 @@ class SubscriptionEngine: ObservableObject {
         subscriptions[idx].status = .active
         subscriptions[idx].updatedAt = Date()
         // Remove override so auto-detection takes over again
-        let merchantKey = subscriptions[idx].merchantName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let merchantKey = Self.normalizeMerchant(subscriptions[idx].merchantName)
         statusOverrides.removeValue(forKey: merchantKey)
         recalcTotals()
     }
 
     private func persistStatus(for sub: DetectedSubscription) {
-        let merchantKey = sub.merchantName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let merchantKey = Self.normalizeMerchant(sub.merchantName)
         statusOverrides[merchantKey] = sub.status.rawValue
     }
 
@@ -157,12 +160,13 @@ class SubscriptionEngine: ObservableObject {
     // MARK: - Recurring → Subscription Conversion
 
     /// Convert active RecurringTransactions into DetectedSubscriptions,
-    /// skipping any that already exist (by merchant name match).
-    static func convertRecurringToSubscriptions(_ recurring: [RecurringTransaction], existingIds: Set<String>) -> [DetectedSubscription] {
+    /// skipping any that already exist (by normalized merchant name match).
+    static func convertRecurringToSubscriptions(_ recurring: [RecurringTransaction], existingNormalizedNames: Set<String>) -> [DetectedSubscription] {
         recurring.compactMap { rt in
             guard rt.isActive else { return nil }
-            let key = rt.name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !existingIds.contains(key) else { return nil }
+            // Use the same normalization as detection grouping to prevent duplicates
+            let key = normalizeMerchant(rt.name)
+            guard !key.isEmpty, !existingNormalizedNames.contains(key) else { return nil }
 
             let cycle: BillingCycle = {
                 switch rt.frequency {
@@ -382,7 +386,9 @@ class SubscriptionEngine: ObservableObject {
 
             let lastTx = sorted.last!
             let lastAmount = lastTx.amount
-            let nextRenewal = cal.date(byAdding: .day, value: billingCycle.approximateDays, to: lastTx.date)
+            // Use actual detected interval for next-renewal, not fixed approximation.
+            // This avoids drift for non-standard cycles (e.g., 28-day monthly, quarterly).
+            let nextRenewal = cal.date(byAdding: .day, value: medianInterval, to: lastTx.date)
 
             let chargeHistory = sorted.map { tx in
                 ChargeRecord(transactionId: tx.id, amount: tx.amount, date: tx.date)
@@ -391,9 +397,9 @@ class SubscriptionEngine: ObservableObject {
             // Determine status
             var status: SubscriptionStatus = .active
 
-            // If last charge was more than 2x the billing cycle ago, mark as maybe missed/unused
+            // If last charge was more than 2x the actual detected interval ago, mark as maybe unused
             let daysSinceLastCharge = cal.dateComponents([.day], from: lastTx.date, to: now).day ?? 0
-            if daysSinceLastCharge > billingCycle.approximateDays * 2 {
+            if daysSinceLastCharge > medianInterval * 2 {
                 status = .suspectedUnused
             }
 
@@ -409,15 +415,45 @@ class SubscriptionEngine: ObservableObject {
                 linkedTransactionIds: sorted.map { $0.id },
                 isAutoDetected: true,
                 confidenceScore: confidence,
-                chargeHistory: chargeHistory
+                chargeHistory: chargeHistory,
+                detectedIntervalDays: medianInterval
             )
 
             detected.append(sub)
         }
 
+        // ─── Step 2g: Merge near-identical detected subscriptions ───
+        // If two detected subscriptions have similar merchant names (e.g. "spotify" and
+        // "spotify premium"), merge the smaller into the larger to prevent fragmentation.
+        var merged = detected
+        var indicesToRemove = Set<Int>()
+        for i in 0..<merged.count {
+            guard !indicesToRemove.contains(i) else { continue }
+            for j in (i+1)..<merged.count {
+                guard !indicesToRemove.contains(j) else { continue }
+                if merchantNamesSimilar(merged[i].merchantName, merged[j].merchantName) {
+                    // Merge j into i (keep the one with more charges)
+                    let (keep, drop) = merged[i].chargeHistory.count >= merged[j].chargeHistory.count ? (i, j) : (j, i)
+                    // Absorb linked transactions and charge history from the dropped one
+                    merged[keep].linkedTransactionIds += merged[drop].linkedTransactionIds
+                    merged[keep].chargeHistory += merged[drop].chargeHistory
+                    merged[keep].chargeHistory.sort { $0.date < $1.date }
+                    // Update amounts from merged history
+                    if let lastCharge = merged[keep].chargeHistory.last {
+                        merged[keep].lastAmount = lastCharge.amount
+                        merged[keep].lastChargeDate = lastCharge.date
+                    }
+                    indicesToRemove.insert(drop)
+                }
+            }
+        }
+        if !indicesToRemove.isEmpty {
+            merged = merged.enumerated().filter { !indicesToRemove.contains($0.offset) }.map { $0.element }
+        }
+
         // ─── Step 3: Merge with manual subscriptions ───
 
-        var all = existingManual + detected
+        var all = existingManual + merged
 
         // Sort by monthly cost descending
         all.sort { $0.monthlyCost > $1.monthlyCost }
@@ -504,7 +540,9 @@ class SubscriptionEngine: ObservableObject {
     /// Normalize merchant name for subscription grouping.
     /// Strips payment processor prefixes, trailing reference numbers,
     /// common suffixes, and collapses whitespace.
-    nonisolated private static func normalizeMerchant(_ name: String) -> String {
+    /// Also used for status override keys and recurring dedup — the single
+    /// source of truth for subscription identity.
+    nonisolated static func normalizeMerchant(_ name: String) -> String {
         var result = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         // Remove common payment processor prefixes

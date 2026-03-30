@@ -181,6 +181,16 @@ struct AddEditAccountView: View {
         let creditLimitValue = creditLimit.isEmpty ? nil : Double(creditLimit)
         let interestRateValue = interestRate.isEmpty ? nil : Double(interestRate)
         let institutionValue = institutionName.isEmpty ? nil : institutionName
+
+        if let rate = interestRateValue, rate < 0 {
+            isSaving = false
+            return
+        }
+
+        if accountType == .creditCard, let limit = creditLimitValue, limit <= 0 {
+            isSaving = false
+            return
+        }
         
         if var existing = existingAccount {
             existing.name = name

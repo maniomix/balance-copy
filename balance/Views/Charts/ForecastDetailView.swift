@@ -161,7 +161,7 @@ struct ForecastDetailView: View {
     private func projectionSection(_ f: ForecastResult) -> some View {
         DS.Card {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Projections")
+                Text("Budget Outlook")
                     .font(DS.Typography.section)
                     .foregroundStyle(DS.Colors.text)
 
@@ -246,21 +246,21 @@ struct ForecastDetailView: View {
                         ForEach(f.timeline) { point in
                             LineMark(
                                 x: .value("Day", point.date, unit: .day),
-                                y: .value("Balance", Double(point.balance) / 100.0)
+                                y: .value("Budget Remaining", Double(point.budgetRemaining) / 100.0)
                             )
                             .foregroundStyle(
-                                point.balance >= 0 ? DS.Colors.accent : DS.Colors.danger
+                                point.budgetRemaining >= 0 ? DS.Colors.accent : DS.Colors.danger
                             )
                             .interpolationMethod(.catmullRom)
 
                             AreaMark(
                                 x: .value("Day", point.date, unit: .day),
-                                y: .value("Balance", Double(point.balance) / 100.0)
+                                y: .value("Budget Remaining", Double(point.budgetRemaining) / 100.0)
                             )
                             .foregroundStyle(
                                 LinearGradient(
                                     colors: [
-                                        (point.balance >= 0 ? DS.Colors.accent : DS.Colors.danger).opacity(0.15),
+                                        (point.budgetRemaining >= 0 ? DS.Colors.accent : DS.Colors.danger).opacity(0.15),
                                         .clear
                                     ],
                                     startPoint: .top,
@@ -302,8 +302,8 @@ struct ForecastDetailView: View {
 
                 // Legend
                 HStack(spacing: 12) {
-                    legendItem("Projected balance", DS.Colors.accent)
-                    legendItem("Danger zone", DS.Colors.danger)
+                    legendItem("Budget remaining", DS.Colors.accent)
+                    legendItem("Over budget", DS.Colors.danger)
                 }
             }
         }
@@ -458,7 +458,7 @@ struct ForecastDetailView: View {
                     .font(DS.Typography.caption.weight(.semibold))
                     .foregroundStyle(DS.Colors.subtext)
 
-                Text("Based on \(f.monthsOfData) month\(f.monthsOfData == 1 ? "" : "s") of transaction history, \(f.upcomingBills.count) upcoming recurring payments, and your current budget settings. Projections assume your spending pattern continues at the current pace.")
+                Text("Based on \(f.monthsOfData) month\(f.monthsOfData == 1 ? "" : "s") of transaction history, \(f.upcomingBills.count) upcoming recurring payments, and your current budget settings. All projections show budget remaining — not account balances. Assumes your spending pattern continues at the current pace.")
                     .font(.system(size: 11))
                     .foregroundStyle(DS.Colors.subtext.opacity(0.8))
                     .fixedSize(horizontal: false, vertical: true)

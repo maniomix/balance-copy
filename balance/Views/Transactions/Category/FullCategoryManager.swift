@@ -4,13 +4,17 @@ import SwiftUI
 struct FullCategoryManager: View {
     @Binding var customCategories: [CustomCategoryModel]
     let onSave: ((CustomCategoryModel) -> Void)?  // ← Updated type
-    
+    /// Called when user swipe-deletes a custom category. Caller should invoke
+    /// `store.deleteCustomCategory(name:)` to clean up transactions, budgets, etc.
+    let onDelete: ((String) -> Void)?
+
     @State private var showAddCategory = false
     @State private var editingCategory: CustomCategoryModel?
-    
-    init(customCategories: Binding<[CustomCategoryModel]>, onSave: ((CustomCategoryModel) -> Void)? = nil) {
+
+    init(customCategories: Binding<[CustomCategoryModel]>, onSave: ((CustomCategoryModel) -> Void)? = nil, onDelete: ((String) -> Void)? = nil) {
         self._customCategories = customCategories
         self.onSave = onSave
+        self.onDelete = onDelete
     }
     
     // Default categories (read-only)
@@ -99,6 +103,10 @@ struct FullCategoryManager: View {
     }
     
     private func deleteCategories(at offsets: IndexSet) {
+        // Notify caller so it can run full Store cleanup (transactions, budgets, recurring, etc.)
+        for idx in offsets {
+            onDelete?(customCategories[idx].name)
+        }
         customCategories.remove(atOffsets: offsets)
     }
 }

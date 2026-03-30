@@ -70,7 +70,9 @@ class SyncCoordinator: ObservableObject {
     private var isSyncInProgress: Bool = false
 
     /// Track whether we have unsaved local changes that haven't been pushed.
-    private var hasDirtyLocalChanges: Bool = false
+    private var hasDirtyLocalChanges: Bool = false {
+        didSet { pendingChanges = hasDirtyLocalChanges }
+    }
 
     /// Track whether we came back from offline and need a full reconciliation.
     private var needsReconnectSync: Bool = false
@@ -258,19 +260,28 @@ class SyncCoordinator: ObservableObject {
         }
 
         // Step 1: Push any accumulated local changes
+        var pushSucceeded = false
         do {
             try await supabase.saveStore(store)
+            pushSucceeded = true
             SecureLogger.info("Reconcile: push succeeded")
         } catch {
-            SecureLogger.error("Reconcile: push failed — continuing with pull", error)
-            // Continue to pull even if push failed; don't lose cloud data
+            retryCount += 1
+            hasDirtyLocalChanges = true
+            let message = AppConfig.shared.safeErrorMessage(
+                detail: error.localizedDescription,
+                fallback: "Sync failed — local changes not yet uploaded."
+            )
+            status = .error(message)
+            SecureLogger.error("Reconcile: push failed — skipping pull to protect local data", error)
         }
 
-        // Step 2: Pull cloud state
+        // Step 2: Only pull cloud state if push succeeded (prevents overwriting unpushed local changes)
+        guard pushSucceeded else { return nil }
+
         do {
             let cloudStore = try await supabase.syncStore(store)
 
-            // Clear deletedTransactionIds since push (hopefully) succeeded
             var reconciled = cloudStore
             reconciled.deletedTransactionIds = []
 

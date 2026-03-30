@@ -177,6 +177,7 @@ struct DetectedSubscription: Identifiable, Codable, Hashable {
     var isAutoDetected: Bool
     var confidenceScore: Double     // 0.0–1.0 detection confidence
     var chargeHistory: [ChargeRecord]
+    var detectedIntervalDays: Int   // actual median interval from detection (for next-renewal)
 
     init(
         id: UUID = UUID(),
@@ -194,7 +195,8 @@ struct DetectedSubscription: Identifiable, Codable, Hashable {
         updatedAt: Date = Date(),
         isAutoDetected: Bool = true,
         confidenceScore: Double = 0.0,
-        chargeHistory: [ChargeRecord] = []
+        chargeHistory: [ChargeRecord] = [],
+        detectedIntervalDays: Int = 0
     ) {
         self.id = id
         self.merchantName = merchantName
@@ -212,6 +214,7 @@ struct DetectedSubscription: Identifiable, Codable, Hashable {
         self.isAutoDetected = isAutoDetected
         self.confidenceScore = confidenceScore
         self.chargeHistory = chargeHistory
+        self.detectedIntervalDays = detectedIntervalDays > 0 ? detectedIntervalDays : billingCycle.approximateDays
     }
 
     // MARK: - Computed

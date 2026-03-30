@@ -165,7 +165,7 @@ struct PlanningInsightsDashboardCard: View {
                     icon: "chart.line.downtrend.xyaxis",
                     color: DS.Colors.danger,
                     title: "30-day outlook is negative",
-                    detail: "Projected \(DS.Format.money(f.projected30Day)) in 30 days at current pace",
+                    detail: "Budget remaining projected at \(DS.Format.money(f.projected30Day)) in 30 days",
                     actionLabel: "Reduce spending to stay positive",
                     priority: 85
                 ))

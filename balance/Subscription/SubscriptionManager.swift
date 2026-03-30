@@ -146,10 +146,10 @@ final class SubscriptionManager: ObservableObject {
             }
             
             saveToLocal()
-            print("✅ Subscription: \(status.rawValue)")
-            
+            SecureLogger.info("Subscription: \(status.rawValue)")
+
         } catch {
-            print("❌ Subscription load failed: \(error)")
+            SecureLogger.error("Subscription load failed", error)
             loadFromLocal()
         }
     }

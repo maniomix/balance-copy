@@ -143,6 +143,11 @@ struct ReviewItem: Identifiable, Hashable {
     let spikeAmount: Int?            // cents — the spike amount
     let spikeAverage: Int?           // cents — the category average
 
+    /// Deterministic key derived from review type + sorted transaction IDs.
+    /// Used for dismissal persistence — survives queue rebuilds because
+    /// the same underlying issue always produces the same key.
+    let stableKey: String
+
     init(
         id: UUID = UUID(),
         transactionIds: [UUID],
@@ -173,6 +178,10 @@ struct ReviewItem: Identifiable, Hashable {
         self.duplicateGroupId = duplicateGroupId
         self.spikeAmount = spikeAmount
         self.spikeAverage = spikeAverage
+
+        // Stable key: type + sorted transaction UUIDs
+        // Same issue always produces the same key across detect() calls
+        self.stableKey = type.rawValue + ":" + transactionIds.map { $0.uuidString }.sorted().joined(separator: "|")
     }
 
     // Hashable

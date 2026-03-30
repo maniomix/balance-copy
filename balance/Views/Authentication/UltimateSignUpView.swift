@@ -32,12 +32,6 @@ struct UltimateSignUpView: View {
                         // Sign Up Form
                         signUpForm
                         
-                        // OR Divider
-                        orDivider
-                        
-                        // Social Sign Up
-                        socialButtons
-                        
                         // Sign In Link
                         signInLink
                     }
@@ -267,50 +261,6 @@ struct UltimateSignUpView: View {
         }
     }
     
-    // MARK: - OR Divider
-    
-    private var orDivider: some View {
-        HStack {
-            Rectangle()
-                .fill(Color(uiColor: .separator))
-                .frame(height: 1)
-            
-            Text("OR")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color(uiColor: .secondaryLabel))
-                .padding(.horizontal, 12)
-            
-            Rectangle()
-                .fill(Color(uiColor: .separator))
-                .frame(height: 1)
-        }
-    }
-    
-    // MARK: - Social Buttons
-    
-    private var socialButtons: some View {
-        Button {
-            signUpWithGoogle()
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "g.circle.fill")
-                    .font(.system(size: 20))
-                
-                Text("Continue with Google")
-                    .font(.system(size: 16, weight: .semibold))
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 54)
-            .background(Color(uiColor: .secondarySystemBackground))
-            .foregroundStyle(Color(uiColor: .label))
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color(uiColor: .separator), lineWidth: 1)
-            )
-        }
-    }
-    
     // MARK: - Sign In Link
     
     private var signInLink: some View {
@@ -381,21 +331,18 @@ struct UltimateSignUpView: View {
                 
                 await MainActor.run {
                     isLoading = false
-                    print("✅ Sign up completed")
+                    SecureLogger.info("Sign up completed")
                 }
             } catch {
                 await MainActor.run {
                     isLoading = false
                     errorMessage = "Sign up failed: \(error.localizedDescription)"
-                    print("❌ Sign up failed: \(error)")
+                    SecureLogger.error("Sign up failed", error)
                 }
             }
         }
     }
     
-    private func signUpWithGoogle() {
-        print("🔵 Google Sign Up - Coming soon")
-    }
 }
 
 #Preview {

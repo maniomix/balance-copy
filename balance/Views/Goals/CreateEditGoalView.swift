@@ -441,6 +441,24 @@ struct CreateEditGoalView: View {
         let target = DS.Format.cents(from: targetAmountText)
         let current = DS.Format.cents(from: currentAmountText)
 
+        guard target > 0 else {
+            errorMessage = "Target amount must be greater than zero."
+            isSaving = false
+            return
+        }
+
+        guard current >= 0 else {
+            errorMessage = "Current amount cannot be negative."
+            isSaving = false
+            return
+        }
+
+        guard current <= target else {
+            errorMessage = "Current amount cannot exceed target amount."
+            isSaving = false
+            return
+        }
+
         if var g = existing {
             g.name = name
             g.type = goalType

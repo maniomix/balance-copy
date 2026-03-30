@@ -38,7 +38,7 @@ struct Household: Identifiable, Codable, Hashable {
 
     static func generateInviteCode() -> String {
         let chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-        return String((0..<6).map { _ in chars.randomElement()! })
+        return String((0..<6).compactMap { _ in chars.randomElement() })
     }
 
     // Convenience
@@ -348,7 +348,7 @@ struct HouseholdInvite: Identifiable, Codable, Hashable {
         role: HouseholdRole = .partner,
         status: InviteStatus = .pending,
         createdAt: Date = Date(),
-        expiresAt: Date = Calendar.current.date(byAdding: .day, value: 7, to: Date())!
+        expiresAt: Date = Calendar.current.date(byAdding: .day, value: 7, to: Date()) ?? Date().addingTimeInterval(7 * 24 * 3600)
     ) {
         self.id = id
         self.householdId = householdId

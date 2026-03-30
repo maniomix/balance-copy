@@ -164,7 +164,7 @@ struct AccountDetailView: View {
                 .eq("account_id", value: account.id.uuidString)
                 .order("snapshot_date", ascending: true).execute().value
             balanceHistory = snapshots
-        } catch { print("❌ Balance history: \(error)") }
+        } catch { SecureLogger.error("Balance history load failed", error) }
     }
     
     private func fmtCurrency(_ value: Double) -> String {

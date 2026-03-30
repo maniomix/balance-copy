@@ -29,6 +29,13 @@
 			remoteGlobalIDString = 3C9FBFF82F682BDC00776A47;
 			remoteInfo = CentmondWidgetExtension;
 		};
+		AA000A0000000000AA00000A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3C4B99252F047DB8003DAE43 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3C4B992C2F047DB8003DAE43;
+			remoteInfo = balance;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -51,6 +58,7 @@
 		3C9FC0112F682C2C00776A47 /* CentmondWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CentmondWidgetExtension.entitlements; sourceTree = "<group>"; };
 		3CBA84D92F2EA215006DB706 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		3CBA84DB2F2EA215006DB706 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		AA00010000000000AA000001 /* balanceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = balanceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -95,6 +103,11 @@
 			path = CentmondWidget;
 			sourceTree = "<group>";
 		};
+		AA00020000000000AA000002 /* balanceTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = balanceTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -123,6 +136,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AA00050000000000AA000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -131,6 +151,7 @@
 			children = (
 				3C9FC0112F682C2C00776A47 /* CentmondWidgetExtension.entitlements */,
 				3C4B992F2F047DB8003DAE43 /* balance */,
+				AA00020000000000AA000002 /* balanceTests */,
 				3C9FBFFC2F682BDC00776A47 /* CentmondWidget */,
 				3CBA84D82F2EA215006DB706 /* Frameworks */,
 				3C4B992E2F047DB8003DAE43 /* Products */,
@@ -142,6 +163,7 @@
 			children = (
 				3C4B992D2F047DB8003DAE43 /* balance.app */,
 				3C9FBFF92F682BDC00776A47 /* CentmondWidgetExtension.appex */,
+				AA00010000000000AA000001 /* balanceTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -213,6 +235,29 @@
 			productReference = 3C9FBFF92F682BDC00776A47 /* CentmondWidgetExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		AA00030000000000AA000003 /* balanceTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA00090000000000AA000009 /* Build configuration list for PBXNativeTarget "balanceTests" */;
+			buildPhases = (
+				AA00040000000000AA000004 /* Sources */,
+				AA00050000000000AA000005 /* Frameworks */,
+				AA00060000000000AA000006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AA000B0000000000AA00000B /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				AA00020000000000AA000002 /* balanceTests */,
+			);
+			name = balanceTests;
+			packageProductDependencies = (
+			);
+			productName = balanceTests;
+			productReference = AA00010000000000AA000001 /* balanceTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -228,6 +273,10 @@
 					};
 					3C9FBFF82F682BDC00776A47 = {
 						CreatedOnToolsVersion = 26.3;
+					};
+					AA00030000000000AA000003 = {
+						CreatedOnToolsVersion = 26.3;
+						TestTargetID = 3C4B992C2F047DB8003DAE43;
 					};
 				};
 			};
@@ -252,6 +301,7 @@
 			targets = (
 				3C4B992C2F047DB8003DAE43 /* balance */,
 				3C9FBFF82F682BDC00776A47 /* CentmondWidgetExtension */,
+				AA00030000000000AA000003 /* balanceTests */,
 			);
 		};
 /* End PBXProject section */
@@ -265,6 +315,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		3C9FBFF72F682BDC00776A47 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA00060000000000AA000006 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -288,6 +345,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AA00040000000000AA000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -295,6 +359,11 @@
 			isa = PBXTargetDependency;
 			target = 3C9FBFF82F682BDC00776A47 /* CentmondWidgetExtension */;
 			targetProxy = 3C9FC00A2F682BDD00776A47 /* PBXContainerItemProxy */;
+		};
+		AA000B0000000000AA00000B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3C4B992C2F047DB8003DAE43 /* balance */;
+			targetProxy = AA000A0000000000AA00000A /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -576,6 +645,50 @@
 			};
 			name = Release;
 		};
+		AA00070000000000AA000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2645K3Q527;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = mani.balance.Tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/balance.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/balance";
+			};
+			name = Debug;
+		};
+		AA00080000000000AA000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2645K3Q527;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = mani.balance.Tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/balance.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/balance";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -602,6 +715,15 @@
 			buildConfigurations = (
 				3C9FC00D2F682BDD00776A47 /* Debug */,
 				3C9FC00E2F682BDD00776A47 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA00090000000000AA000009 /* Build configuration list for PBXNativeTarget "balanceTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA00070000000000AA000007 /* Debug */,
+				AA00080000000000AA000008 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

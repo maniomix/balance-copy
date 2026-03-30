@@ -153,7 +153,7 @@ struct ForecastDashboardCard: View {
 
     private func miniChart(points: [ForecastPoint]) -> some View {
         GeometryReader { geo in
-            let values = points.map { $0.balance }
+            let values = points.map { $0.budgetRemaining }
             let minVal = values.min() ?? 0
             let maxVal = values.max() ?? 1
             let range = max(1, maxVal - minVal)
@@ -163,7 +163,7 @@ struct ForecastDashboardCard: View {
                 Path { path in
                     for (i, point) in points.enumerated() {
                         let x = geo.size.width * CGFloat(i) / CGFloat(max(1, points.count - 1))
-                        let y = geo.size.height * (1.0 - CGFloat(point.balance - minVal) / CGFloat(range))
+                        let y = geo.size.height * (1.0 - CGFloat(point.budgetRemaining - minVal) / CGFloat(range))
                         if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
                         else { path.addLine(to: CGPoint(x: x, y: y)) }
                     }
@@ -182,7 +182,7 @@ struct ForecastDashboardCard: View {
                 Path { path in
                     for (i, point) in points.enumerated() {
                         let x = geo.size.width * CGFloat(i) / CGFloat(max(1, points.count - 1))
-                        let y = geo.size.height * (1.0 - CGFloat(point.balance - minVal) / CGFloat(range))
+                        let y = geo.size.height * (1.0 - CGFloat(point.budgetRemaining - minVal) / CGFloat(range))
                         if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
                         else { path.addLine(to: CGPoint(x: x, y: y)) }
                     }

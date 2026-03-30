@@ -33,12 +33,6 @@ struct UltimateLoginView: View {
                         // Login Form
                         loginForm
                         
-                        // OR Divider
-                        orDivider
-                        
-                        // Social Login
-                        socialButtons
-                        
                         // Sign Up Link
                         signUpLink
                     }
@@ -215,50 +209,6 @@ struct UltimateLoginView: View {
         .shadow(color: Color.black.opacity(0.05), radius: 15, y: 5)
     }
     
-    // MARK: - OR Divider
-    
-    private var orDivider: some View {
-        HStack {
-            Rectangle()
-                .fill(Color(uiColor: .separator))
-                .frame(height: 1)
-            
-            Text("OR")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color(uiColor: .secondaryLabel))
-                .padding(.horizontal, 12)
-            
-            Rectangle()
-                .fill(Color(uiColor: .separator))
-                .frame(height: 1)
-        }
-    }
-    
-    // MARK: - Social Buttons
-    
-    private var socialButtons: some View {
-        Button {
-            signInWithGoogle()
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "g.circle.fill")
-                    .font(.system(size: 20))
-                
-                Text("Continue with Google")
-                    .font(.system(size: 16, weight: .semibold))
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 54)
-            .background(Color(uiColor: .secondarySystemBackground))
-            .foregroundStyle(Color(uiColor: .label))
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color(uiColor: .separator), lineWidth: 1)
-            )
-        }
-    }
-    
     // MARK: - Sign Up Link
     
     private var signUpLink: some View {
@@ -325,9 +275,6 @@ struct UltimateLoginView: View {
         }
     }
     
-    private func signInWithGoogle() {
-        print("🔵 Google Sign In - Coming soon")
-    }
 }
 
 // MARK: - Forgot Password Sheet

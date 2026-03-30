@@ -175,6 +175,14 @@ class AccountManager: ObservableObject {
 
             SecureLogger.info("Account deleted")
             await fetchAccounts()
+
+            // Notify so transaction references can be cleaned up
+            NotificationCenter.default.post(
+                name: .accountDidDelete,
+                object: nil,
+                userInfo: ["accountId": account.id]
+            )
+
             return true
         } catch {
             self.errorMessage = AppConfig.shared.safeErrorMessage(
@@ -188,9 +196,15 @@ class AccountManager: ObservableObject {
 
     // MARK: - Balance Updates
 
-    /// Update account balance after a transaction is added
-    func adjustBalance(accountId: UUID, amount: Double, isExpense: Bool) async {
-        guard var account = accounts.first(where: { $0.id == accountId }) else { return }
+    /// Update account balance after a transaction is added.
+    /// Returns `true` if the balance was successfully persisted to Supabase,
+    /// `false` if the account was not found or the DB update failed.
+    @discardableResult
+    func adjustBalance(accountId: UUID, amount: Double, isExpense: Bool) async -> Bool {
+        guard var account = accounts.first(where: { $0.id == accountId }) else {
+            SecureLogger.warning("adjustBalance: account not found in local cache, skipping")
+            return false
+        }
 
         if account.type.isAsset {
             account.currentBalance += isExpense ? -amount : amount
@@ -199,11 +213,17 @@ class AccountManager: ObservableObject {
         }
 
         account.updatedAt = Date()
-        _ = await updateAccount(account)
+        let success = await updateAccount(account)
+        if !success {
+            SecureLogger.warning("adjustBalance: DB update failed for account")
+        }
+        return success
     }
 
-    /// Reverse a balance adjustment (e.g., when deleting a transaction)
-    func reverseBalanceAdjustment(accountId: UUID, amount: Double, isExpense: Bool) async {
+    /// Reverse a balance adjustment (e.g., when deleting a transaction).
+    /// Returns `true` if the reversal was successfully persisted.
+    @discardableResult
+    func reverseBalanceAdjustment(accountId: UUID, amount: Double, isExpense: Bool) async -> Bool {
         await adjustBalance(accountId: accountId, amount: amount, isExpense: !isExpense)
     }
 

@@ -6,7 +6,13 @@ import Combine
 // ============================================================
 // Singleton managing the household state, split expenses,
 // settlements, and shared budgets.
-// Persists locally via UserDefaults (keyed by userId).
+//
+// PERSISTENCE MODEL: LOCAL-FIRST WRITE, CLOUD-AUTHORITATIVE READ
+//   - User edits → saved to UserDefaults immediately (never lost)
+//   - User edits → pushed to Supabase after local save
+//   - On pull: cloud data replaces local for all household state
+//   - Offline: local edits accumulate safely in UserDefaults
+//
 // Single-user mode: household == nil → all features hidden.
 // ============================================================
 
@@ -24,10 +30,12 @@ class HouseholdManager: ObservableObject {
     @Published var sharedGoals: [SharedGoal] = []
     @Published var pendingInvites: [HouseholdInvite] = []
     @Published var isLoading: Bool = false
+    @Published var isSyncing: Bool = false
 
     private var userId: String = ""
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private let supabase = SupabaseManager.shared
 
     private init() {}
 
@@ -37,22 +45,30 @@ class HouseholdManager: ObservableObject {
 
     func load(userId: String) {
         self.userId = userId
+        // Load from local UserDefaults immediately (fast, offline-safe)
         household = loadData("household_\(userId)")
         sharedBudgets = loadData("shared_budgets_\(userId)") ?? []
         splitExpenses = loadData("split_expenses_\(userId)") ?? []
         settlements = loadData("settlements_\(userId)") ?? []
         sharedGoals = loadData("shared_goals_\(userId)") ?? []
         pendingInvites = loadData("household_invites_\(userId)") ?? []
+
+        // Then pull from cloud in background (cloud-authoritative)
+        Task { await pullFromCloud() }
     }
 
     func save() {
         guard !userId.isEmpty else { return }
+        // Always save locally first (instant, offline-safe)
         saveData(household, key: "household_\(userId)")
         saveData(sharedBudgets, key: "shared_budgets_\(userId)")
         saveData(splitExpenses, key: "split_expenses_\(userId)")
         saveData(settlements, key: "settlements_\(userId)")
         saveData(sharedGoals, key: "shared_goals_\(userId)")
         saveData(pendingInvites, key: "household_invites_\(userId)")
+
+        // Push to cloud in background (non-blocking)
+        Task { await pushToCloud() }
     }
 
     // ============================================================
@@ -111,8 +127,8 @@ class HouseholdManager: ObservableObject {
     }
 
     func joinHousehold(code: String, displayName: String, email: String) -> Bool {
-        // In a real app this would be a server call.
-        // For local mode we simulate: find household with matching code.
+        // Legacy local-only join: matches code against local household.
+        // For cloud join, use joinHouseholdViaCloud() instead.
         guard var h = household, h.inviteCode.uppercased() == code.uppercased() else {
             return false
         }
@@ -516,8 +532,122 @@ class HouseholdManager: ObservableObject {
     }
 
     // ============================================================
+    // MARK: - Cloud Sync
+    // ============================================================
+
+    /// Pull household data from Supabase and replace local state.
+    /// Called on load and can be triggered manually for refresh.
+    func pullFromCloud() async {
+        guard !userId.isEmpty else { return }
+        guard supabase.currentUser != nil else { return }
+
+        isSyncing = true
+        defer { isSyncing = false }
+
+        do {
+            guard let cloudData = try await supabase.pullHouseholdData(userId: userId.lowercased()) else {
+                // No household in cloud — keep local state as-is
+                SecureLogger.debug("No household found in cloud for user")
+                return
+            }
+
+            // Cloud-authoritative: replace local state
+            household = cloudData.household
+            splitExpenses = cloudData.splitExpenses
+            settlements = cloudData.settlements
+            sharedBudgets = cloudData.sharedBudgets
+            sharedGoals = cloudData.sharedGoals
+
+            // Persist to UserDefaults for offline access
+            saveLocal()
+
+            SecureLogger.info("Household pulled from cloud: \(cloudData.splitExpenses.count) splits, \(cloudData.settlements.count) settlements")
+        } catch {
+            SecureLogger.error("Household cloud pull failed", error)
+        }
+    }
+
+    /// Push current local household data to Supabase.
+    /// Called after every local save.
+    private func pushToCloud() async {
+        guard !userId.isEmpty else { return }
+        guard supabase.currentUser != nil else { return }
+        guard let h = household else { return }
+
+        isSyncing = true
+        defer { isSyncing = false }
+
+        do {
+            try await supabase.pushHouseholdData(
+                household: h,
+                members: h.members,
+                splitExpenses: splitExpenses,
+                settlements: settlements,
+                sharedBudgets: sharedBudgets,
+                sharedGoals: sharedGoals
+            )
+            SecureLogger.info("Household pushed to cloud")
+        } catch {
+            SecureLogger.error("Household cloud push failed", error)
+            // Local data is safe in UserDefaults — will retry on next save
+        }
+    }
+
+    /// Join a household by invite code via cloud lookup.
+    func joinHouseholdViaCloud(code: String, displayName: String, email: String) async -> Bool {
+        guard !userId.isEmpty, supabase.currentUser != nil else { return false }
+
+        do {
+            // Look up household by invite code in Supabase
+            guard let remoteHousehold = try await supabase.findHouseholdByInviteCode(code) else {
+                SecureLogger.info("No household found for invite code")
+                return false
+            }
+
+            // Check not already a member
+            let existingMembers = try await supabase.loadHouseholdMembers(householdId: remoteHousehold.id)
+            if existingMembers.contains(where: { $0.userId.lowercased() == userId.lowercased() }) {
+                // Already a member — just pull data
+                await pullFromCloud()
+                return true
+            }
+
+            // Add self as a member
+            let member = HouseholdMember(
+                userId: userId,
+                displayName: displayName,
+                email: email,
+                role: .partner,
+                shareTransactions: true
+            )
+            try await supabase.saveHouseholdMember(member, householdId: remoteHousehold.id)
+
+            // Pull the full household state
+            await pullFromCloud()
+
+            AnalyticsManager.shared.track(.householdJoined)
+            SecureLogger.info("Joined household via cloud")
+            return true
+        } catch {
+            SecureLogger.error("Cloud join failed", error)
+            return false
+        }
+    }
+
+    // ============================================================
     // MARK: - Persistence Helpers
     // ============================================================
+
+    /// Save to UserDefaults only (no cloud push). Used by pullFromCloud.
+    private func saveLocal() {
+        guard !userId.isEmpty else { return }
+        saveData(household, key: "household_\(userId)")
+        saveData(sharedBudgets, key: "shared_budgets_\(userId)")
+        saveData(splitExpenses, key: "split_expenses_\(userId)")
+        saveData(settlements, key: "settlements_\(userId)")
+        saveData(sharedGoals, key: "shared_goals_\(userId)")
+        saveData(pendingInvites, key: "household_invites_\(userId)")
+    }
 
     private func saveData<T: Encodable>(_ value: T, key: String) {
         if let data = try? encoder.encode(value) {

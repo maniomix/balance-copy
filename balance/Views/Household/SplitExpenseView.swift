@@ -321,7 +321,10 @@ struct SplitExpenseView: View {
                 note: note.isEmpty ? "Split: \(selectedSplitRule.displayName)" : "Split: \(note)",
                 type: .expense
             )
-            store.transactions.append(txn)
+            // Intentionally bypasses TransactionService — split expenses are household-
+            // originated records with no balance/goal side-effects. Persistence is handled
+            // by ContentView's onChange(of: store) safety-net save.
+            store.add(txn)
         }
 
         Haptics.success()

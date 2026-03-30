@@ -126,8 +126,8 @@ struct PDFReportGenerator {
     private static func drawMonthlySummary(ctx: UIGraphicsPDFRendererContext, pageRect: CGRect, store: Store, date: Date, currency: String) {
         let cal = Calendar.current
         let comps = cal.dateComponents([.year, .month], from: date)
-        let monthStart = cal.date(from: comps)!
-        let monthEnd = cal.date(byAdding: .month, value: 1, to: monthStart)!
+        guard let monthStart = cal.date(from: comps),
+              let monthEnd = cal.date(byAdding: .month, value: 1, to: monthStart) else { return }
 
         let monthTx = store.transactions.filter { $0.date >= monthStart && $0.date < monthEnd }
         let expenses = monthTx.filter { $0.type == .expense }
@@ -379,7 +379,8 @@ struct PDFReportGenerator {
         monthFmt.dateFormat = "MMM yyyy"
 
         while current < end {
-            let monthEnd = cal.date(byAdding: .month, value: 1, to: cal.date(from: cal.dateComponents([.year, .month], from: current))!)!
+            guard let monthStart = cal.date(from: cal.dateComponents([.year, .month], from: current)),
+                  let monthEnd = cal.date(byAdding: .month, value: 1, to: monthStart) else { break }
             let effectiveEnd = min(monthEnd, end)
             let monthTx = txs.filter { $0.date >= current && $0.date < effectiveEnd }
 

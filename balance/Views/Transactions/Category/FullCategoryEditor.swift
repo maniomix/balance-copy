@@ -12,6 +12,7 @@ struct FullCategoryEditor: View {
     @State private var selectedIcon: String = "tag.fill"
     @State private var selectedColor: Color = .purple
     @State private var showIconPicker = false
+    @State private var showDuplicateAlert = false
     
     init(customCategories: Binding<[CustomCategoryModel]>, editingCategory: CustomCategoryModel? = nil, onSave: ((CustomCategoryModel) -> Void)? = nil) {
         self._customCategories = customCategories
@@ -90,38 +91,50 @@ struct FullCategoryEditor: View {
             .sheet(isPresented: $showIconPicker) {
                 IconPickerSheet(selectedIcon: $selectedIcon, selectedColor: selectedColor)
             }
+            .alert("Duplicate Name", isPresented: $showDuplicateAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("A category with this name already exists. Please choose a different name.")
+            }
         }
     }
     
     private func saveCategory() {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return }
+
+        // Duplicate-name guard: reject if another custom category already has this name
+        // (allow saving the same name back when editing — only block true conflicts)
+        let isRename = editingCategory != nil && editingCategory!.name != trimmedName
+        let isNew = editingCategory == nil
+        if isRename || isNew {
+            let lowerName = trimmedName.lowercased()
+            let conflict = customCategories.contains { existing in
+                existing.id != (editingCategory?.id ?? "") && existing.name.lowercased() == lowerName
+            }
+            // Also check system category names
+            let systemNames = Category.allCases.map { $0.title.lowercased() }
+            if conflict || systemNames.contains(lowerName) {
+                showDuplicateAlert = true
+                return
+            }
+        }
+
         let category = CustomCategoryModel(
             id: editingCategory?.id ?? UUID().uuidString,
-            name: name,
+            name: trimmedName,
             icon: selectedIcon,
             colorHex: selectedColor.toHex()
         )
-        
-        print("🔍 FullCategoryEditor.saveCategory() called")
-        print("   Category: \(category)")
-        print("   customCategories.count BEFORE: \(customCategories.count)")
-        
+
         if let index = customCategories.firstIndex(where: { $0.id == category.id }) {
-            // Edit - آپدیت می‌کنیم
             customCategories[index] = category
-            print("   ✅ Updated existing category at index \(index)")
         } else {
-            // Add - جدید اضافه می‌کنیم
             customCategories.append(category)
-            print("   ✅ Appended new category")
         }
-        
-        print("   customCategories.count AFTER: \(customCategories.count)")
-        
-        // ✅ Pass کن کل model
-        print("   🔍 Calling onSave callback...")
+
         onSave?(category)
-        print("   ✅ onSave callback completed")
-        
+
         dismiss()
     }
 }
