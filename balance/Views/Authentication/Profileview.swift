@@ -88,14 +88,14 @@ struct ProfileView: View {
                         )
                 } else {
                     Circle()
-                        .fill(Color.white.opacity(0.06))
+                        .fill(DS.Colors.surface)
                         .frame(width: 90, height: 90)
                         .overlay(
                             Text(initials)
                                 .font(.system(size: 32, weight: .bold, design: .rounded))
                                 .foregroundStyle(DS.Colors.accent)
                         )
-                        .overlay(Circle().stroke(Color.white.opacity(0.1), lineWidth: 1))
+                        .overlay(Circle().stroke(DS.Colors.grid, lineWidth: 1))
                 }
                 
                 PhotosPicker(selection: $selectedImage, matching: .images) {
@@ -174,7 +174,7 @@ struct ProfileView: View {
                 .foregroundStyle(DS.Colors.text)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-            
+
             Text(label)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(DS.Colors.subtext)
@@ -182,10 +182,10 @@ struct ProfileView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
-        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(DS.Colors.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
+                .strokeBorder(DS.Colors.grid.opacity(0.5), lineWidth: 1)
         )
     }
     
@@ -235,12 +235,12 @@ struct ProfileView: View {
                 HStack(spacing: 14) {
                     ZStack {
                         Circle()
-                            .fill(isPro ? Color.white : Color.white.opacity(0.08))
+                            .fill(isPro ? DS.Colors.accent : DS.Colors.surface2)
                             .frame(width: 44, height: 44)
                         
                         Image(systemName: isPro ? "crown.fill" : "lock.fill")
                             .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(isPro ? .black : DS.Colors.subtext)
+                            .foregroundStyle(isPro ? .white : DS.Colors.subtext)
                     }
                     
                     VStack(alignment: .leading, spacing: 3) {
@@ -257,10 +257,10 @@ struct ProfileView: View {
                     
                     Text(isPro ? "PRO" : "FREE")
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(isPro ? .black : DS.Colors.subtext)
+                        .foregroundStyle(isPro ? .white : DS.Colors.subtext)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
-                        .background(isPro ? Color.white : Color.white.opacity(0.08))
+                        .background(isPro ? DS.Colors.accent : DS.Colors.surface2)
                         .clipShape(Capsule())
                 }
                 .padding(14)
@@ -268,7 +268,7 @@ struct ProfileView: View {
                 if isPro || manager.status == .trial {
                     // Divider
                     Rectangle()
-                        .fill(Color.white.opacity(0.08))
+                        .fill(DS.Colors.grid)
                         .frame(height: 0.5)
                         .padding(.horizontal, 14)
                     
@@ -314,7 +314,7 @@ struct ProfileView: View {
                 } else {
                     // Free user info
                     Rectangle()
-                        .fill(Color.white.opacity(0.08))
+                        .fill(DS.Colors.grid)
                         .frame(height: 0.5)
                         .padding(.horizontal, 14)
                     
@@ -352,7 +352,7 @@ struct ProfileView: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(Color.white.opacity(0.06), lineWidth: 0.5)
+                    .strokeBorder(DS.Colors.grid.opacity(0.5), lineWidth: 1)
             )
         }
     }
@@ -372,7 +372,11 @@ struct ProfileView: View {
                 rowDivider
                 infoRow(icon: "repeat", title: "Recurring", value: "\(store.recurringTransactions.filter { $0.isActive }.count) active", color: DS.Colors.warning)
             }
-            .glassCard()
+            .background(DS.Colors.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(DS.Colors.grid.opacity(0.5), lineWidth: 1)
+            )
         }
     }
     
@@ -399,7 +403,11 @@ struct ProfileView: View {
                     actionRow(icon: "square.and.arrow.up", title: "Export Data", color: DS.Colors.positive)
                 }
             }
-            .glassCard()
+            .background(DS.Colors.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(DS.Colors.grid.opacity(0.5), lineWidth: 1)
+            )
         }
     }
     

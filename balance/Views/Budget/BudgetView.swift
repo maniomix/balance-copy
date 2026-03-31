@@ -13,6 +13,7 @@ struct BudgetView: View {
     @State private var showAddCategory = false
     @State private var newCategoryName = ""
     @State private var editingCustomCategory: CustomCategoryModel?
+    @State private var savedCategory: Category? = nil
     @FocusState private var focus: Bool
 
     // Check if budget has changed
@@ -27,38 +28,36 @@ struct BudgetView: View {
                 VStack(spacing: 14) {
 
                     DS.Card {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Set Monthly Budget")
-                                .font(DS.Typography.section)
-                                .foregroundStyle(DS.Colors.text)
-
-                            Text("Keep it realistic")
-                                .font(DS.Typography.body)
+                        VStack(spacing: 16) {
+                            Text("Monthly Budget")
+                                .font(DS.Typography.caption)
                                 .foregroundStyle(DS.Colors.subtext)
+                                .textCase(.uppercase)
+                                .tracking(0.5)
 
-                            HStack(spacing: 10) {
-                                TextField("e.g. 3000.00", text: $editingTotal)
-                                    .keyboardType(.decimalPad)
-                                    .textInputAutocapitalization(.never)
-                                    .autocorrectionDisabled()
-                                    .focused($focus)
-                                    .font(DS.Typography.number)
-                                    .padding(11)
-                                    .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            // Hero amount — large centered input
+                            TextField(DS.Format.amountPlaceholder(), text: $editingTotal)
+                                .keyboardType(.decimalPad)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .focused($focus)
+                                .font(.system(size: 42, weight: .bold, design: .rounded).monospacedDigit())
+                                .foregroundStyle(DS.Colors.text)
+                                .multilineTextAlignment(.center)
+                                .padding(.vertical, 8)
 
-                                Button(store.budgetTotal <= 0 ? "Start" : "Update") {
-                                    let v = DS.Format.cents(from: editingTotal)
-                                    store.budgetTotal = max(0, v)
-                                    focus = false  // Dismiss keyboard
-                                    Haptics.success()
-                                    AnalyticsManager.shared.track(.budgetSet)
-                                    AnalyticsManager.shared.checkFirstBudget()
-                                }
-                                .buttonStyle(DS.PrimaryButton())
-                                .frame(width: 140)
-                                .disabled(!hasChanges)  // Disable if no changes
-                                .opacity(hasChanges ? 1.0 : 0.5)  // Visual feedback
+                            // Full-width save button
+                            Button(store.budgetTotal <= 0 ? "Start Tracking" : "Save Budget") {
+                                let v = DS.Format.cents(from: editingTotal)
+                                store.budgetTotal = max(0, v)
+                                focus = false
+                                Haptics.success()
+                                AnalyticsManager.shared.track(.budgetSet)
+                                AnalyticsManager.shared.checkFirstBudget()
                             }
+                            .buttonStyle(DS.PrimaryButton())
+                            .disabled(!hasChanges)
+                            .opacity(hasChanges ? 1.0 : 0.5)
 
                             if store.budgetTotal <= 0 {
                                 DS.StatusLine(
@@ -235,22 +234,42 @@ struct BudgetView: View {
                                             }
                                             Spacer()
 
-                                            TextField("0.00", text: Binding(
-                                                get: { editingCategoryBudgets[c] ?? "" },
-                                                set: { newVal in
-                                                    editingCategoryBudgets[c] = newVal
-                                                    let v = DS.Format.cents(from: newVal)
-                                                    store.setCategoryBudget(v, for: c)
+                                            HStack(spacing: 6) {
+                                                // Save confirmation checkmark
+                                                if savedCategory == c {
+                                                    Image(systemName: "checkmark.circle.fill")
+                                                        .font(.system(size: 14))
+                                                        .foregroundStyle(DS.Colors.positive)
+                                                        .transition(.scale.combined(with: .opacity))
                                                 }
-                                            ))
-                                            .keyboardType(.decimalPad)
-                                            .textInputAutocapitalization(.never)
-                                            .autocorrectionDisabled()
-                                            .multilineTextAlignment(.trailing)
-                                            .font(DS.Typography.number)
-                                            .padding(10)
-                                            .frame(width: 120)
-                                            .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                                                TextField("0.00", text: Binding(
+                                                    get: { editingCategoryBudgets[c] ?? "" },
+                                                    set: { newVal in
+                                                        editingCategoryBudgets[c] = newVal
+                                                        let v = DS.Format.cents(from: newVal)
+                                                        store.setCategoryBudget(v, for: c)
+
+                                                        // Show save confirmation
+                                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                                            savedCategory = c
+                                                        }
+                                                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                                                            withAnimation(.easeOut(duration: 0.3)) {
+                                                                if savedCategory == c { savedCategory = nil }
+                                                            }
+                                                        }
+                                                    }
+                                                ))
+                                                .keyboardType(.decimalPad)
+                                                .textInputAutocapitalization(.never)
+                                                .autocorrectionDisabled()
+                                                .multilineTextAlignment(.trailing)
+                                                .font(DS.Typography.number)
+                                                .padding(10)
+                                                .frame(width: 120)
+                                                .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                            }
                                         }
                                         .contextMenu {
                                             if case .custom(let name) = c {
@@ -365,7 +384,18 @@ struct BudgetView: View {
                 .padding(.bottom, 24)
             }
             .navigationTitle("Budget")
-            .keyboardManagement()  // Global keyboard handling
+            .keyboardManagement()
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        focus = false
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    }
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundStyle(DS.Colors.accent)
+                }
+            }
             .onAppear {
                 // Initialize with current budget
                 if store.budgetTotal > 0 {

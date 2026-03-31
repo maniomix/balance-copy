@@ -25,6 +25,11 @@ enum DS {
             light: UIColor(red: 0.95, green: 0.95, blue: 0.97, alpha: 1),  // #F2F2F7
             dark:  UIColor(red: 0.15, green: 0.15, blue: 0.18, alpha: 1)   // #26262E
         )
+        /// Elevated surface for cards in dark mode (slightly lighter than surface)
+        static let surfaceElevated = adaptive(
+            light: .white,
+            dark:  UIColor(red: 0.13, green: 0.13, blue: 0.16, alpha: 1)   // #212128
+        )
 
         // ── Text ──
         static let text = adaptive(
@@ -55,11 +60,23 @@ enum DS {
             dark:  UIColor(red: 0.95, green: 0.95, blue: 0.97, alpha: 1)
         )
 
-        // ── Semantic (same in both modes — vibrant enough) ──
-        static let positive = Color(red: 0.20, green: 0.78, blue: 0.55)     // #34C78C
-        static let warning  = Color(red: 1.00, green: 0.72, blue: 0.27)     // #FFB845
-        static let danger   = Color(red: 0.96, green: 0.32, blue: 0.35)     // #F55259
-        static let negative = Color(red: 0.96, green: 0.32, blue: 0.35)     // #F55259
+        // ── Semantic (adaptive — vibrant in light, muted/pastel in dark) ──
+        static let positive = adaptive(
+            light: UIColor(red: 0.18, green: 0.75, blue: 0.50, alpha: 1),   // #2EBF80 vibrant
+            dark:  UIColor(red: 0.40, green: 0.85, blue: 0.65, alpha: 1)    // #66D9A6 softer pastel
+        )
+        static let warning = adaptive(
+            light: UIColor(red: 0.95, green: 0.65, blue: 0.15, alpha: 1),   // #F2A626 vibrant amber
+            dark:  UIColor(red: 1.00, green: 0.78, blue: 0.40, alpha: 1)    // #FFC766 soft gold
+        )
+        static let danger = adaptive(
+            light: UIColor(red: 0.92, green: 0.28, blue: 0.30, alpha: 1),   // #EB474D vibrant
+            dark:  UIColor(red: 0.98, green: 0.45, blue: 0.47, alpha: 1)    // #FA7378 softer coral
+        )
+        static let negative = adaptive(
+            light: UIColor(red: 0.92, green: 0.28, blue: 0.30, alpha: 1),   // #EB474D
+            dark:  UIColor(red: 0.98, green: 0.45, blue: 0.47, alpha: 1)    // #FA7378
+        )
     }
 
     // MARK: - Typography (Better Hierarchy)
@@ -70,11 +87,76 @@ enum DS {
         static let body = Font.system(size: 15, weight: .regular, design: .rounded)
         static let callout = Font.system(size: 14, weight: .medium, design: .rounded)
         static let caption = Font.system(size: 13, weight: .regular, design: .rounded)
-        static let number = Font.system(size: 17, weight: .semibold, design: .monospaced)
-        static let heroAmount = Font.system(size: 42, weight: .bold, design: .rounded)
+        static let number = Font.system(size: 17, weight: .semibold, design: .monospaced).monospacedDigit()
+        static let heroAmount = Font.system(size: 42, weight: .bold, design: .rounded).monospacedDigit()
     }
 
-    // MARK: - Card (Shadow-based, no borders)
+    // MARK: - Gradients (Premium accent-based)
+    enum Gradients {
+        /// Primary accent gradient — deep purple to accent blue
+        static let accent = LinearGradient(
+            colors: [
+                Color(red: 0.22, green: 0.18, blue: 0.80),  // Deep indigo
+                Color(red: 0.27, green: 0.35, blue: 0.96)   // #4559F5
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+
+        /// Subtle card shimmer — very low opacity accent wash
+        static let cardShimmer = LinearGradient(
+            colors: [
+                Color(red: 0.27, green: 0.35, blue: 0.96).opacity(0.06),
+                Color(red: 0.45, green: 0.25, blue: 0.85).opacity(0.03),
+                Color.clear
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+
+        /// Positive glow — green to teal
+        static let positive = LinearGradient(
+            colors: [
+                Colors.positive.opacity(0.8),
+                Colors.positive
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+
+        /// Danger glow — coral to red
+        static let danger = LinearGradient(
+            colors: [
+                Colors.danger.opacity(0.8),
+                Colors.danger
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+
+        /// Mesh-style background overlay
+        static let meshOverlay = LinearGradient(
+            colors: [
+                Color(red: 0.27, green: 0.35, blue: 0.96).opacity(0.08),
+                Color(red: 0.50, green: 0.20, blue: 0.90).opacity(0.04),
+                Color.clear
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+
+    // MARK: - Materials (Glassmorphism)
+    enum Materials {
+        /// Ultra-thin blur for sticky headers & overlays
+        static let ultraThin = Material.ultraThinMaterial
+        /// Thin blur for cards floating above content
+        static let thin = Material.thinMaterial
+        /// Regular blur for modal backgrounds
+        static let regular = Material.regularMaterial
+    }
+
+    // MARK: - Card (Elevation-based, subtle border in dark)
     struct Card<Content: View>: View {
         var padding: CGFloat = 18
         @Environment(\.colorScheme) private var colorScheme
@@ -83,8 +165,27 @@ enum DS {
             content
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(padding)
-                .background(Colors.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .shadow(color: .black.opacity(colorScheme == .dark ? 0.25 : 0.04), radius: colorScheme == .dark ? 8 : 12, x: 0, y: 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(colorScheme == .dark ? Colors.surfaceElevated : Colors.surface)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .strokeBorder(
+                            colorScheme == .dark
+                                ? Color.white.opacity(0.06)
+                                : Color.black.opacity(0.03),
+                            lineWidth: 1
+                        )
+                )
+                .shadow(
+                    color: colorScheme == .dark
+                        ? .clear                              // no shadow in dark — rely on elevation + border
+                        : .black.opacity(0.04),
+                    radius: 12,
+                    x: 0,
+                    y: 4
+                )
         }
     }
 
@@ -120,6 +221,19 @@ enum DS {
                 )
                 .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
                 .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+        }
+    }
+
+    // MARK: - Modern Scale Button Style (Premium micro-interaction)
+    struct ModernScaleButtonStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
+                .opacity(configuration.isPressed ? 0.85 : 1.0)
+                .animation(
+                    .spring(response: 0.28, dampingFraction: 0.72, blendDuration: 0),
+                    value: configuration.isPressed
+                )
         }
     }
 
@@ -175,10 +289,41 @@ enum DS {
         }
     }
 
+    // MARK: - Section Header (Elegant grouping)
+    struct SectionHeader: View {
+        let title: String
+        var icon: String? = nil
+        var trailing: AnyView? = nil
+
+        var body: some View {
+            HStack(spacing: 6) {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Colors.accent)
+                }
+
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Colors.subtext)
+                    .textCase(.uppercase)
+                    .tracking(0.5)
+
+                Spacer()
+
+                if let trailing {
+                    trailing
+                }
+            }
+        }
+    }
+
     struct StatusLine: View {
         let title: String
         let detail: String
         let level: Level
+
+        @Environment(\.colorScheme) private var colorScheme
 
         var body: some View {
             HStack(alignment: .top, spacing: 12) {
@@ -203,8 +348,17 @@ enum DS {
                 Spacer(minLength: 0)
             }
             .padding(14)
-            .background(Colors.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(colorScheme == .dark ? Colors.surfaceElevated : Colors.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(
+                        colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.03),
+                        lineWidth: 1
+                    )
+            )
         }
     }
 

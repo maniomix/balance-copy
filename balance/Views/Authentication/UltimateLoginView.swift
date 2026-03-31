@@ -2,7 +2,7 @@ import SwiftUI
 
 struct UltimateLoginView: View {
     @EnvironmentObject private var authManager: AuthManager
-    
+
     @State private var email = ""
     @State private var password = ""
     @State private var showPassword = false
@@ -11,39 +11,29 @@ struct UltimateLoginView: View {
     @State private var resetEmail = ""
     @State private var showResetSuccess = false
     @State private var errorMessage: String?
-    
+
     var onSignUp: () -> Void
-    
+
     var body: some View {
         ZStack {
-            // Background
-            Color(uiColor: .systemBackground)
-                .ignoresSafeArea()
-            
-            // Centered Content
+            DS.Colors.bg.ignoresSafeArea()
+
             ScrollView {
                 VStack {
                     Spacer()
-                    
-                    // Main Content
+
                     VStack(spacing: 32) {
-                        // Logo & Title
                         logoSection
-                        
-                        // Login Form
                         loginForm
-                        
-                        // Sign Up Link
                         signUpLink
                     }
                     .padding(.horizontal, 24)
-                    
+
                     Spacer()
                 }
                 .frame(minHeight: UIScreen.main.bounds.height - 100)
             }
-            
-            // Loading Overlay
+
             if isLoading {
                 loadingOverlay
             }
@@ -55,132 +45,121 @@ struct UltimateLoginView: View {
             )
         }
     }
-    
+
     // MARK: - Logo Section
-    
+
     private var logoSection: some View {
         VStack(spacing: 12) {
-            // App Icon
             ZStack {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(Color(uiColor: .secondarySystemBackground))
+                    .fill(DS.Colors.surface)
                     .frame(width: 70, height: 70)
-                
+
                 Image(systemName: "chart.bar.fill")
                     .font(.system(size: 32))
-                    .foregroundStyle(Color(uiColor: .label))
+                    .foregroundStyle(DS.Colors.text)
             }
-            
+
             Text("CENTMOND")
-                .font(.custom("Pacifico-Regular", size: 30))
-                .foregroundStyle(Color(uiColor: .label))
-            
+                .font(DS.Typography.largeTitle)
+                .foregroundStyle(DS.Colors.text)
+
             Text("Welcome back")
-                .font(.system(size: 15))
-                .foregroundStyle(Color(uiColor: .secondaryLabel))
+                .font(DS.Typography.body)
+                .foregroundStyle(DS.Colors.subtext)
         }
     }
-    
+
     // MARK: - Login Form
-    
+
     private var loginForm: some View {
         VStack(spacing: 16) {
             // Email Field
             VStack(alignment: .leading, spacing: 8) {
                 Text("Email")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Color(uiColor: .label))
-                
+                    .font(DS.Typography.callout)
+                    .foregroundStyle(DS.Colors.text)
+
                 HStack(spacing: 12) {
                     Image(systemName: "envelope.fill")
                         .font(.system(size: 16))
-                        .foregroundStyle(Color(uiColor: .secondaryLabel))
+                        .foregroundStyle(DS.Colors.subtext)
                         .frame(width: 20)
-                    
+
                     TextField("your@email.com", text: $email)
-                        .font(.system(size: 16))
+                        .font(DS.Typography.body)
                         .keyboardType(.emailAddress)
                         .autocapitalization(.none)
                         .textContentType(.emailAddress)
                 }
                 .padding(14)
-                .background(Color(uiColor: .secondarySystemBackground))
-                .cornerRadius(12)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color(uiColor: .separator), lineWidth: 1)
-                )
+                .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
-            
+
             // Password Field
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Password")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(Color(uiColor: .label))
-                    
+                        .font(DS.Typography.callout)
+                        .foregroundStyle(DS.Colors.text)
+
                     Spacer()
-                    
+
                     Button {
                         resetEmail = email
                         showForgotPassword = true
                     } label: {
                         Text("Forgot?")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(DS.Typography.caption.weight(.medium))
                             .foregroundStyle(DS.Colors.accent)
                     }
                 }
-                
+
                 HStack(spacing: 12) {
                     Image(systemName: "lock.fill")
                         .font(.system(size: 16))
-                        .foregroundStyle(Color(uiColor: .secondaryLabel))
+                        .foregroundStyle(DS.Colors.subtext)
                         .frame(width: 20)
-                    
+
                     if showPassword {
                         TextField("Enter your password", text: $password)
-                            .font(.system(size: 16))
+                            .font(DS.Typography.body)
                             .textContentType(.password)
                     } else {
                         SecureField("Enter your password", text: $password)
-                            .font(.system(size: 16))
+                            .font(DS.Typography.body)
                             .textContentType(.password)
                     }
-                    
+
                     Button {
                         showPassword.toggle()
                     } label: {
                         Image(systemName: showPassword ? "eye.slash.fill" : "eye.fill")
                             .font(.system(size: 16))
-                            .foregroundStyle(Color(uiColor: .secondaryLabel))
+                            .foregroundStyle(DS.Colors.subtext)
                     }
                 }
                 .padding(14)
-                .background(Color(uiColor: .secondarySystemBackground))
-                .cornerRadius(12)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color(uiColor: .separator), lineWidth: 1)
-                )
+                .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
-            
+
             // Error Message
             if let errorMessage = errorMessage {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 14))
-                        .foregroundStyle(.red)
-                    
+                        .foregroundStyle(DS.Colors.danger)
+
                     Text(errorMessage)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.red)
-                    
+                        .font(DS.Typography.caption)
+                        .foregroundStyle(DS.Colors.danger)
+
                     Spacer()
                 }
                 .padding(.horizontal, 4)
                 .transition(.scale.combined(with: .opacity))
             }
-            
+
             // Sign In Button
             Button {
                 signIn()
@@ -191,26 +170,23 @@ struct UltimateLoginView: View {
                             .tint(.white)
                     } else {
                         Text("Sign In")
-                            .font(.system(size: 17, weight: .semibold))
                     }
                 }
-                .frame(maxWidth: .infinity)
-                .frame(height: 54)
-                .background(Color(uiColor: .label))
-                .foregroundStyle(Color(uiColor: .systemBackground))
-                .cornerRadius(12)
             }
+            .buttonStyle(DS.PrimaryButton())
             .disabled(isLoading || email.isEmpty || password.isEmpty)
             .opacity((email.isEmpty || password.isEmpty) ? 0.5 : 1.0)
         }
         .padding(24)
-        .background(Color(uiColor: .secondarySystemBackground))
-        .cornerRadius(16)
-        .shadow(color: Color.black.opacity(0.05), radius: 15, y: 5)
+        .background(DS.Colors.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(DS.Colors.grid.opacity(0.5), lineWidth: 1)
+        )
     }
-    
+
     // MARK: - Sign Up Link
-    
+
     private var signUpLink: some View {
         Button {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
@@ -219,50 +195,50 @@ struct UltimateLoginView: View {
         } label: {
             HStack(spacing: 4) {
                 Text("Don't have an account?")
-                    .foregroundStyle(Color(uiColor: .secondaryLabel))
+                    .foregroundStyle(DS.Colors.subtext)
                 Text("Sign Up")
                     .fontWeight(.semibold)
                     .foregroundStyle(DS.Colors.accent)
             }
-            .font(.system(size: 15))
+            .font(DS.Typography.body)
         }
     }
-    
+
     // MARK: - Loading Overlay
-    
+
     private var loadingOverlay: some View {
         ZStack {
             Color.black.opacity(0.3)
                 .ignoresSafeArea()
-            
+
             VStack(spacing: 16) {
                 ProgressView()
                     .scaleEffect(1.2)
                     .tint(.white)
-                
+
                 Text("Signing in...")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(DS.Typography.body.weight(.medium))
                     .foregroundStyle(.white)
             }
             .padding(28)
-            .background(.ultraThinMaterial)
+            .background(DS.Materials.ultraThin)
             .cornerRadius(16)
         }
     }
-    
+
     // MARK: - Actions
-    
+
     private func signIn() {
         isLoading = true
         errorMessage = nil
-        
+
         Task {
             do {
                 try await authManager.signIn(
                     email: email.trimmingCharacters(in: .whitespaces).lowercased(),
                     password: password.trimmingCharacters(in: .whitespaces)
                 )
-                
+
                 await MainActor.run {
                     isLoading = false
                 }
@@ -274,7 +250,7 @@ struct UltimateLoginView: View {
             }
         }
     }
-    
+
 }
 
 // MARK: - Forgot Password Sheet
@@ -286,16 +262,15 @@ struct ForgotPasswordSheet: View {
     @Binding var showSuccess: Bool
     @State private var isLoading = false
     @State private var errorMessage: String?
-    
+
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(uiColor: .systemBackground)
-                    .ignoresSafeArea()
-                
+                DS.Colors.bg.ignoresSafeArea()
+
                 VStack(spacing: 24) {
                     Spacer()
-                    
+
                     // Icon
                     ZStack {
                         Circle()
@@ -306,60 +281,55 @@ struct ForgotPasswordSheet: View {
                             .font(.system(size: 32))
                             .foregroundStyle(DS.Colors.accent)
                     }
-                    
+
                     // Title
                     VStack(spacing: 8) {
                         Text("Reset Password")
-                            .font(.system(size: 26, weight: .bold))
-                            .foregroundStyle(Color(uiColor: .label))
-                        
+                            .font(DS.Typography.largeTitle)
+                            .foregroundStyle(DS.Colors.text)
+
                         Text("Enter your email and we'll send you a link to reset your password")
-                            .font(.system(size: 14))
-                            .foregroundStyle(Color(uiColor: .secondaryLabel))
+                            .font(DS.Typography.body)
+                            .foregroundStyle(DS.Colors.subtext)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 20)
                     }
-                    
+
                     // Email Field
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Email")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(Color(uiColor: .label))
-                        
+                            .font(DS.Typography.callout)
+                            .foregroundStyle(DS.Colors.text)
+
                         HStack(spacing: 12) {
                             Image(systemName: "envelope.fill")
                                 .font(.system(size: 16))
-                                .foregroundStyle(Color(uiColor: .secondaryLabel))
+                                .foregroundStyle(DS.Colors.subtext)
                                 .frame(width: 20)
-                            
+
                             TextField("your@email.com", text: $email)
-                                .font(.system(size: 16))
+                                .font(DS.Typography.body)
                                 .keyboardType(.emailAddress)
                                 .autocapitalization(.none)
                                 .textContentType(.emailAddress)
                         }
                         .padding(14)
-                        .background(Color(uiColor: .secondarySystemBackground))
-                        .cornerRadius(12)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color(uiColor: .separator), lineWidth: 1)
-                        )
+                        .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                     .padding(.horizontal, 24)
-                    
+
                     // Error Message
                     if let errorMessage = errorMessage {
                         HStack(spacing: 8) {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.red)
+                                .foregroundStyle(DS.Colors.danger)
                             Text(errorMessage)
-                                .font(.system(size: 13))
-                                .foregroundStyle(.red)
+                                .font(DS.Typography.caption)
+                                .foregroundStyle(DS.Colors.danger)
                         }
                         .padding(.horizontal, 24)
                     }
-                    
+
                     // Send Button
                     Button {
                         sendResetEmail()
@@ -370,19 +340,14 @@ struct ForgotPasswordSheet: View {
                                     .tint(.white)
                             } else {
                                 Text("Send Reset Link")
-                                    .font(.system(size: 17, weight: .semibold))
                             }
                         }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 54)
-                        .background(DS.Colors.accent)
-                        .foregroundStyle(.white)
-                        .cornerRadius(12)
                     }
+                    .buttonStyle(DS.PrimaryButton())
                     .disabled(email.isEmpty || isLoading)
                     .opacity(email.isEmpty ? 0.5 : 1.0)
                     .padding(.horizontal, 24)
-                    
+
                     Spacer()
                 }
             }
@@ -397,15 +362,15 @@ struct ForgotPasswordSheet: View {
             }
         }
     }
-    
+
     private func sendResetEmail() {
         isLoading = true
         errorMessage = nil
-        
+
         Task {
             do {
                 try await authManager.resetPassword(email: email.trimmingCharacters(in: .whitespaces).lowercased())
-                
+
                 await MainActor.run {
                     isLoading = false
                     showSuccess = true

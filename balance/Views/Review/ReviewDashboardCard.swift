@@ -1,11 +1,5 @@
 import SwiftUI
 
-// ============================================================
-// MARK: - Review Dashboard Card (Redesigned)
-// ============================================================
-// Minimal banner-style card: icon + count + top issue + action.
-// ============================================================
-
 struct ReviewDashboardCard: View {
     @Binding var store: Store
     @StateObject private var engine = ReviewEngine.shared
@@ -18,67 +12,85 @@ struct ReviewDashboardCard: View {
                 Haptics.medium()
             } label: {
                 DS.Card {
-                    HStack(spacing: 12) {
-                        // Icon with badge
-                        ZStack(alignment: .topTrailing) {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(DS.Colors.warning.opacity(0.12))
-                                .frame(width: 40, height: 40)
+                    VStack(alignment: .leading, spacing: 12) {
 
-                            Image(systemName: "tray.fill")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(DS.Colors.warning)
-                                .frame(width: 40, height: 40)
+                        // ── Header row ──
+                        HStack(spacing: 10) {
+                            ZStack(alignment: .topTrailing) {
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(DS.Colors.warning.opacity(0.12))
+                                    .frame(width: 38, height: 38)
+                                Image(systemName: "tray.fill")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(DS.Colors.warning)
+                                    .frame(width: 38, height: 38)
+                                if engine.highPriorityCount > 0 {
+                                    Circle()
+                                        .fill(DS.Colors.danger)
+                                        .frame(width: 14, height: 14)
+                                        .overlay(
+                                            Text("\(engine.highPriorityCount)")
+                                                .font(.system(size: 8, weight: .bold))
+                                                .foregroundStyle(.white)
+                                        )
+                                        .offset(x: 4, y: -4)
+                                }
+                            }
 
-                            if engine.highPriorityCount > 0 {
-                                Circle()
-                                    .fill(DS.Colors.danger)
-                                    .frame(width: 14, height: 14)
-                                    .overlay(
-                                        Text("\(engine.highPriorityCount)")
-                                            .font(.system(size: 8, weight: .bold))
-                                            .foregroundStyle(.white)
-                                    )
-                                    .offset(x: 4, y: -4)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Needs Review")
+                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(DS.Colors.text)
+                                Text("\(engine.pendingCount) transaction\(engine.pendingCount == 1 ? "" : "s") flagged")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(DS.Colors.subtext)
+                            }
+
+                            Spacer()
+
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(DS.Colors.subtext.opacity(0.3))
+                        }
+
+                        // ── Issue type breakdown ──
+                        let chips = issueChips()
+                        if !chips.isEmpty {
+                            HStack(spacing: 6) {
+                                ForEach(chips, id: \.label) { chip in
+                                    HStack(spacing: 4) {
+                                        Image(systemName: chip.icon)
+                                            .font(.system(size: 9, weight: .bold))
+                                        Text(chip.label)
+                                            .font(.system(size: 10, weight: .semibold))
+                                    }
+                                    .foregroundStyle(chip.color)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(chip.color.opacity(0.1), in: Capsule())
+                                }
+                                Spacer()
                             }
                         }
 
-                        // Info
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("\(engine.pendingCount) items need review")
-                                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                                .foregroundStyle(DS.Colors.text)
+                        // ── Top issue preview ──
+                        if let top = engine.pendingItems.first {
+                            HStack(spacing: 8) {
+                                Rectangle()
+                                    .fill(DS.Colors.warning.opacity(0.4))
+                                    .frame(width: 3)
+                                    .clipShape(Capsule())
 
-                            // Top issue preview
-                            if let top = engine.pendingItems.first {
                                 Text(top.reason)
                                     .font(.system(size: 11, weight: .medium))
                                     .foregroundStyle(DS.Colors.subtext)
-                                    .lineLimit(1)
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+
+                                Spacer(minLength: 0)
                             }
+                            .frame(minHeight: 28)
                         }
-
-                        Spacer()
-
-                        // Tags — show the most important categories
-                        VStack(alignment: .trailing, spacing: 4) {
-                            if engine.duplicateCount > 0 {
-                                tagPill("\(engine.duplicateCount) duplicate", DS.Colors.danger)
-                            }
-                            if engine.spikeCount > 0 {
-                                tagPill("\(engine.spikeCount) spike", Color(hexValue: 0x9B59B6))
-                            }
-                            if engine.uncategorizedCount > 0 {
-                                tagPill("\(engine.uncategorizedCount) uncat.", DS.Colors.warning)
-                            }
-                            if engine.recurringCandidateCount > 0 && engine.duplicateCount == 0 && engine.spikeCount == 0 {
-                                tagPill("\(engine.recurringCandidateCount) recurring", DS.Colors.accent)
-                            }
-                        }
-
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(DS.Colors.subtext.opacity(0.3))
                     }
                 }
             }
@@ -89,12 +101,26 @@ struct ReviewDashboardCard: View {
         }
     }
 
-    private func tagPill(_ text: String, _ color: Color) -> some View {
-        Text(text)
-            .font(.system(size: 9, weight: .bold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.1), in: Capsule())
+    private struct IssueChip {
+        let icon: String
+        let label: String
+        let color: Color
+    }
+
+    private func issueChips() -> [IssueChip] {
+        var chips: [IssueChip] = []
+        if engine.duplicateCount > 0 {
+            chips.append(IssueChip(icon: "doc.on.doc.fill", label: "\(engine.duplicateCount) duplicate", color: DS.Colors.danger))
+        }
+        if engine.spikeCount > 0 {
+            chips.append(IssueChip(icon: "arrow.up.right", label: "\(engine.spikeCount) spike", color: Color(hexValue: 0x9B59B6)))
+        }
+        if engine.uncategorizedCount > 0 {
+            chips.append(IssueChip(icon: "tag.slash.fill", label: "\(engine.uncategorizedCount) uncat.", color: DS.Colors.warning))
+        }
+        if engine.recurringCandidateCount > 0 && chips.isEmpty {
+            chips.append(IssueChip(icon: "repeat", label: "\(engine.recurringCandidateCount) recurring", color: DS.Colors.accent))
+        }
+        return chips
     }
 }

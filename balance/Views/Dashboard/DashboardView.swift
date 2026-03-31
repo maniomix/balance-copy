@@ -54,57 +54,95 @@ struct DashboardView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 14) {
+                VStack(spacing: 24) {
+
+                    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                    // SECTION: Month Header
+                    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                     header
 
                     if store.budgetTotal <= 0 {
                         SetupCard(goToBudget: goToBudget)
                     } else {
-                        // Financial snapshot
-                        kpis
-                        trendCard
 
-                        // Action cards (copilot)
-                        ActionCardsView(
-                            cards: actionCards,
-                            monthKey: {
-                                let cal = Calendar.current
-                                let y = cal.component(.year, from: store.selectedMonth)
-                                let m = cal.component(.month, from: store.selectedMonth)
-                                return String(format: "%04d-%02d", y, m)
-                            }()
-                        )
+                        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        // SECTION: Overview
+                        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        VStack(spacing: 12) {
+                            DS.SectionHeader(title: "Overview", icon: "chart.bar.fill")
 
-                        // Health score
-                        if let score = healthScore {
-                            HealthScoreCard(score: score)
+                            kpis
+                            trendCard
                         }
 
-                        SafeToSpendCard()
+                        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        // SECTION: Actions & Health
+                        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        VStack(spacing: 12) {
+                            ActionCardsView(
+                                cards: actionCards,
+                                monthKey: {
+                                    let cal = Calendar.current
+                                    let y = cal.component(.year, from: store.selectedMonth)
+                                    let m = cal.component(.month, from: store.selectedMonth)
+                                    return String(format: "%04d-%02d", y, m)
+                                }()
+                            )
 
-                        // Activity & upcoming
-                        UpcomingBillsDashboardCard()
+                            if let score = healthScore {
+                                HealthScoreCard(score: score)
+                            }
 
-                        // Categories
-                        categoryCard
+                            SafeToSpendCard()
+                        }
 
-                        // Projections & wealth
-                        ForecastDashboardCard()
-                        NetWorthDashboardCard()
+                        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        // SECTION: Activity
+                        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        VStack(spacing: 12) {
+                            DS.SectionHeader(title: "Activity", icon: "clock.fill")
 
-                        // Planning guidance
-                        PlanningInsightsDashboardCard()
+                            UpcomingBillsDashboardCard()
+                            categoryCard
+                        }
 
-                        // Goals & action items
-                        GoalsDashboardCard()
-                        ReviewDashboardCard(store: $store)
+                        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        // SECTION: Insights & Projections
+                        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        VStack(spacing: 12) {
+                            DS.SectionHeader(title: "Insights", icon: "lightbulb.fill")
 
-                        // Recurring & shared
-                        SubscriptionsDashboardCard()
-                        HouseholdDashboardCard(store: $store)
+                            ForecastDashboardCard()
+                            NetWorthDashboardCard()
+                            PlanningInsightsDashboardCard()
+                        }
 
-                        // Analytical
-                        paymentBreakdownCard
+                        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        // SECTION: Goals & Review
+                        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        VStack(spacing: 12) {
+                            DS.SectionHeader(title: "Goals", icon: "target")
+
+                            GoalsDashboardCard()
+                            ReviewDashboardCard(store: $store)
+                        }
+
+                        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        // SECTION: More
+                        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        VStack(spacing: 12) {
+                            DS.SectionHeader(title: "More", icon: "ellipsis.circle.fill")
+
+                            SubscriptionsDashboardCard()
+                            HouseholdDashboardCard(store: $store)
+
+                            // Payment breakdown — horizontal scroll
+                            paymentBreakdownCard
+                        }
+
+                        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        // SECTION: AI Advisor
+                        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                         advisorInsightsCard
                     }
                 }
@@ -112,15 +150,16 @@ struct DashboardView: View {
                 .padding(.top, 10)
                 .padding(.bottom, 24)
             }
+            .background(DS.Colors.bg)
             .navigationTitle("Dashboard")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // 🔄 Sync Status (وسط)
+                // Sync Status (center)
                 ToolbarItem(placement: .principal) {
                     SyncStatusView(store: $store)
                 }
 
-                // ⚙️ Month actions menu (سمت چپ — safe behind menu)
+                // Month actions menu (leading)
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
                         Button(role: .destructive) {
@@ -146,7 +185,7 @@ struct DashboardView: View {
                     .accessibilityLabel("Month actions")
                 }
 
-                // ➕ دکمه اضافه کردن (سمت راست – همونی که داشتی)
+                // Add button (trailing)
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Haptics.medium()
@@ -218,6 +257,8 @@ struct DashboardView: View {
         }
     }
 
+    // MARK: - Header
+
     private var header: some View {
         DS.Card {
             VStack(alignment: .leading, spacing: 10) {
@@ -262,11 +303,13 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: - KPI Square
+    // MARK: - KPI Square (Simplified — no heavy borders)
     private struct KPISquare: View {
         let title: String
         let value: String
         var accentColor: Color? = nil
+
+        @Environment(\.colorScheme) private var colorScheme
 
         var body: some View {
             VStack(alignment: .leading, spacing: 6) {
@@ -281,12 +324,19 @@ struct DashboardView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
-            .background(DS.Colors.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(colorScheme == .dark ? DS.Colors.surfaceElevated : DS.Colors.surface)
+            )
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder((accentColor ?? DS.Colors.grid).opacity(0.35), lineWidth: 1)
+                    .strokeBorder(
+                        accentColor != nil
+                            ? (accentColor ?? DS.Colors.text).opacity(colorScheme == .dark ? 0.35 : 0.25)
+                            : (colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.03)),
+                        lineWidth: accentColor != nil ? 1.5 : 1
+                    )
             )
-            .shadow(color: (accentColor ?? .black).opacity(0.06), radius: 8, x: 0, y: 3)
         }
     }
 
@@ -323,7 +373,7 @@ struct DashboardView: View {
 
             // Compact pill row
             HStack(spacing: 6) {
-                // Budget % pill — tappable with expandable bubble
+                // Budget % pill
                 if budget > 0 {
                     ZStack(alignment: .top) {
                         Button {
@@ -377,7 +427,7 @@ struct DashboardView: View {
 
                 Spacer()
 
-                // Transaction count pill — tap to show "Free" label
+                // Transaction count pill
                 if !subscriptionManager.isPro {
                     let currentCount = store.transactions.count
                     let freeLimit = 50
@@ -472,7 +522,7 @@ struct DashboardView: View {
             }
             .frame(height: 10)
 
-            // Scale labels — separate row below bar
+            // Scale labels
             GeometryReader { geo in
                 let w = geo.size.width
                 ZStack(alignment: .leading) {
@@ -493,7 +543,7 @@ struct DashboardView: View {
             }
             .frame(height: 12)
 
-            // Percentage used — capsule pill
+            // Percentage used
             Text("\(Int(spentRatio * 100))% used")
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundStyle(barColor)
@@ -572,6 +622,8 @@ struct DashboardView: View {
         .padding(12)
         .background(DS.Colors.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
+
+    // MARK: - Trend Chart
 
     private var trendCard: some View {
         let points = Analytics.dailySpendPoints(store: store)
@@ -804,6 +856,7 @@ struct DashboardView: View {
         .position(x: tx, y: ty)
     }
 
+    // MARK: - Category Card
 
     private var categoryCard: some View {
         let breakdown = Analytics.categoryBreakdown(store: store)
@@ -814,8 +867,6 @@ struct DashboardView: View {
         for t in monthTx { spentByCategory[t.category, default: 0] += t.amount }
 
         // Rows to show under the chart:
-        // 1) Top categories by spend (up to 6)
-        // 2) Any category that has a cap set (even if spend is zero) so the cap UI always appears
         let topCats: [Category] = breakdown.prefix(6).map { $0.category }
         let cappedCats: [Category] = Category.allCases.filter { store.categoryBudget(for: $0) > 0 }
         let orderedCats: [Category] = Array(NSOrderedSet(array: topCats + cappedCats))
@@ -873,19 +924,24 @@ struct DashboardView: View {
                             AxisValueLabel().foregroundStyle(DS.Colors.subtext)
                         }
                     }
-                    .frame(height: CGFloat(breakdown.count) * 32 + 50)  // 32px per category, همه قابل دید
+                    .frame(height: CGFloat(breakdown.count) * 32 + 50)
 
                     Divider().foregroundStyle(DS.Colors.grid)
 
-                    VStack(spacing: 10) {
-                        ForEach(orderedCats, id: \.self) { c in
-                            let spent = spentByCategory[c] ?? 0
-                            let cap = store.categoryBudget(for: c)
+                    // Category caps — horizontal scroll for space efficiency
+                    if !orderedCats.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 10) {
+                                ForEach(orderedCats, id: \.self) { c in
+                                    let spent = spentByCategory[c] ?? 0
+                                    let cap = store.categoryBudget(for: c)
 
-                            if cap > 0 {
-                                CategoryCapRow(category: c, spent: spent, cap: cap)
-                            } else if spent > 0 {
-                                CategoryTotalRow(category: c, spent: spent)
+                                    if cap > 0 {
+                                        CategoryCapChip(category: c, spent: spent, cap: cap)
+                                    } else if spent > 0 {
+                                        CategorySpentChip(category: c, spent: spent)
+                                    }
+                                }
                             }
                         }
                     }
@@ -893,6 +949,75 @@ struct DashboardView: View {
             }
         }
     }
+
+    // MARK: - Category Chips (compact horizontal items)
+
+    private struct CategoryCapChip: View {
+        let category: Category
+        let spent: Int
+        let cap: Int
+
+        private var ratio: Double { cap > 0 ? min(1.0, Double(spent) / Double(cap)) : 0 }
+        private var isOver: Bool { spent > cap }
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 4) {
+                    Text(category.icon)
+                        .font(.system(size: 14))
+                    Text(category.title)
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundStyle(DS.Colors.text)
+                        .lineLimit(1)
+                }
+
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(DS.Colors.surface2).frame(height: 4)
+                        Capsule()
+                            .fill(isOver ? DS.Colors.danger : DS.Colors.accent)
+                            .frame(width: geo.size.width * ratio, height: 4)
+                    }
+                }
+                .frame(height: 4)
+
+                Text("\(DS.Format.money(spent)) / \(DS.Format.money(cap))")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(isOver ? DS.Colors.danger : DS.Colors.subtext)
+                    .lineLimit(1)
+            }
+            .padding(10)
+            .frame(width: 140)
+            .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    private struct CategorySpentChip: View {
+        let category: Category
+        let spent: Int
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 4) {
+                    Text(category.icon)
+                        .font(.system(size: 14))
+                    Text(category.title)
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundStyle(DS.Colors.text)
+                        .lineLimit(1)
+                }
+
+                Text(DS.Format.money(spent))
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(DS.Colors.text)
+            }
+            .padding(10)
+            .frame(width: 120)
+            .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    // MARK: - Payment Breakdown (Horizontal Scroll)
 
     private var paymentBreakdownCard: some View {
         let breakdown = Analytics.paymentBreakdown(store: store)
@@ -916,80 +1041,12 @@ struct DashboardView: View {
                         .foregroundStyle(DS.Colors.subtext)
                         .padding(.vertical, 6)
                 } else {
-                    // کارت‌های عمودی compact
-                    VStack(spacing: 10) {
-                        ForEach(breakdown) { item in
-                            HStack(spacing: 12) {
-                                // بخش چپ: آیکون با گرادیانت
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                        .fill(
-                                            LinearGradient(
-                                                colors: [DS.Colors.surface, DS.Colors.text],  // مشکی → سفید (هر دو)
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
-                                            )
-                                        )
-                                        .frame(width: 60, height: 60)  // 70 → 60
-                                        .shadow(color: Color.white.opacity(0.15), radius: 10, x: 0, y: 4)
-
-                                    VStack(spacing: 3) {
-                                        Image(systemName: item.method.icon)
-                                            .font(.system(size: 22, weight: .semibold))  // 24 → 22
-                                            .foregroundStyle(Color.black)  // همه مشکی
-
-                                        Text("\(Int(item.percentage * 100))%")
-                                            .font(.system(size: 14, weight: .bold, design: .rounded))  // 16 → 14
-                                            .foregroundStyle(Color.black)  // همه مشکی
-                                    }
-                                }
-
-                                // بخش راست: اطلاعات
-                                VStack(alignment: .leading, spacing: 6) {
-                                    HStack(spacing: 6) {
-                                        Text(item.method.displayName)
-                                            .font(DS.Typography.body.weight(.semibold))
-                                            .foregroundStyle(DS.Colors.text)
-
-                                        Spacer()
-
-                                    Text("\(Int(item.percentage * 100))%")
-                                            .font(DS.Typography.caption.weight(.bold))
-                                            .foregroundStyle(DS.Colors.text)  // همه سفید
-                                    }
-
-                                    // Progress bar
-                                    GeometryReader { geo in
-                                        ZStack(alignment: .leading) {
-                                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                                .fill(DS.Colors.surface2)
-                                                .frame(height: 6)
-
-                                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                                .fill(
-                                                    LinearGradient(
-                                                        colors: [DS.Colors.surface, DS.Colors.text],  // مشکی → سفید (هر دو)
-                                                        startPoint: .leading,
-                                                        endPoint: .trailing
-                                                    )
-                                                )
-                                                .frame(width: geo.size.width * item.percentage, height: 6)
-                                        }
-                                    }
-                                    .frame(height: 6)
-
-                                    Text(DS.Format.money(item.total))
-                                        .font(.system(size: 17, weight: .bold, design: .rounded))
-                                        .foregroundStyle(DS.Colors.text)  // همه سفید
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                    // Horizontal scroll for payment methods
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 12) {
+                            ForEach(breakdown) { item in
+                                PaymentMethodChip(item: item)
                             }
-                            .padding(12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .fill(DS.Colors.surface2)
-                            )
-                            .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
                         }
                     }
 
@@ -1033,14 +1090,74 @@ struct DashboardView: View {
         }
     }
 
+    // MARK: - Payment Method Chip
+
+    private struct PaymentMethodChip: View {
+        let item: Analytics.PaymentBreakdown
+
+        @Environment(\.colorScheme) private var colorScheme
+
+        private var methodColor: Color {
+            switch item.method {
+            case .card:   return DS.Colors.accent
+            case .cash:   return DS.Colors.positive
+            default:      return DS.Colors.warning
+            }
+        }
+
+        var body: some View {
+            VStack(spacing: 8) {
+                // Icon box
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(methodColor.opacity(0.15))
+                        .frame(width: 52, height: 52)
+                    VStack(spacing: 2) {
+                        Image(systemName: item.method.icon)
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(methodColor)
+                        Text("\(Int(item.percentage * 100))%")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(methodColor)
+                    }
+                }
+
+                Text(item.method.displayName)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(DS.Colors.subtext)
+
+                Text(DS.Format.money(item.total))
+                    .font(.system(size: 14, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(DS.Colors.text)
+            }
+            .padding(14)
+            .frame(width: 140)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(colorScheme == .dark ? DS.Colors.surfaceElevated : DS.Colors.surface2)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(methodColor.opacity(colorScheme == .dark ? 0.2 : 0.15), lineWidth: 1)
+            )
+        }
+    }
+
+    // MARK: - Advisor Insights
+
     private var advisorInsightsCard: some View {
         let insights = Analytics.generateInsights(store: store).prefix(5)
         return DS.Card {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Text("Advisor Insights")
-                        .font(DS.Typography.section)
-                        .foregroundStyle(DS.Colors.text)
+                    HStack(spacing: 6) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(DS.Colors.accent)
+                        Text("Advisor Insights")
+                            .font(DS.Typography.section)
+                            .foregroundStyle(DS.Colors.text)
+                    }
                     Spacer()
                     Text("We're here to help, not judge")
                         .font(DS.Typography.caption)
@@ -1098,6 +1215,8 @@ struct DashboardView: View {
         )
     }
 }
+
+// MARK: - Setup Card
 
 private struct SetupCard: View {
     let goToBudget: () -> Void

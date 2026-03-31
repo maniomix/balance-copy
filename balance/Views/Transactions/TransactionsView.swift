@@ -282,7 +282,7 @@ struct TransactionsView: View {
                 // .sheet(isPresented: $showRecurring) {
                 //     AddRecurringSheet(store: $store)
                 // }
-                .fullScreenCover(isPresented: $showFilters) {
+                .sheet(isPresented: $showFilters) {
                     TransactionsFilterSheet(
                         selectedCategories: $selectedCategories,
                         categories: store.allCategories,
@@ -291,8 +291,10 @@ struct TransactionsView: View {
                         dateTo: $dateTo,
                         minAmountText: $minAmountText,
                         maxAmountText: $maxAmountText,
-                        selectedPaymentMethods: $selectedPaymentMethods  // ← جدید
+                        selectedPaymentMethods: $selectedPaymentMethods
                     )
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
                 }
         }
     }
@@ -364,26 +366,25 @@ struct TransactionsView: View {
     }
 
     private var transactionsListView: some View {
-        List {
-            // Budget nudge banner (non-blocking)
-            if store.budgetTotal <= 0 {
-                Section {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                // Budget nudge banner (non-blocking)
+                if store.budgetTotal <= 0 {
                     noBudgetBanner
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 4)
                 }
-                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-            }
 
-            if filtered.isEmpty {
-                emptyStateView
-            } else {
-                transactionsList
+                if filtered.isEmpty {
+                    emptyStateView
+                } else {
+                    transactionsList
+                }
             }
+            .padding(.bottom, showUndoBar ? 80 : 24)
         }
-        .scrollContentBackground(.hidden)
-        .listStyle(.plain)
-        .id("\(sortOrder.rawValue)-\(filtered.count)")  // ✅ Refresh on sort OR new transactions
+        .background(DS.Colors.bg)
+        .id("\(sortOrder.rawValue)-\(filtered.count)")
         .onChange(of: search) { oldValue, newValue in
             // Reset to This Month when search is cleared
             if newValue.isEmpty && searchScope == .allTime {
@@ -414,114 +415,107 @@ struct TransactionsView: View {
                 .font(DS.Typography.body)
                 .foregroundStyle(DS.Colors.subtext)
         }
-        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-        .listRowBackground(DS.Colors.bg)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
         .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
     private var transactionsList: some View {
         Group {
-            // ✅ Upcoming Payments Banner
-            Section {
-                UpcomingPaymentsBanner(store: $store)
-            }
-            .listRowInsets(EdgeInsets())
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
+            // Upcoming Payments Banner
+            UpcomingPaymentsBanner(store: $store)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
 
             // Search Scope Selector (if searching)
             if !search.isEmpty {
-                Section {
-                    VStack(spacing: 10) {
-                        HStack(spacing: 8) {
-                            ForEach(SearchScope.allCases, id: \.self) { scope in
-                                Button {
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                        searchScope = scope
-                                    }
-                                    Haptics.selection()
-                                } label: {
-                                    Text(scope.rawValue)
-                                        .font(.system(size: 13, weight: searchScope == scope ? .semibold : .medium))
-                                        .foregroundStyle(searchScope == scope ? .black : DS.Colors.text)
-                                        .padding(.horizontal, 16)
-                                        .padding(.vertical, 8)
-                                        .background(
-                                            searchScope == scope ?
-                                            Color.white :
-                                            DS.Colors.surface2,
-                                            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                        )
-                                }
-                                .buttonStyle(.plain)
+                HStack(spacing: 8) {
+                    ForEach(SearchScope.allCases, id: \.self) { scope in
+                        Button {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                searchScope = scope
                             }
-
-                            Spacer()
-
-                            // Result count
-                            Text("\(filtered.count) \(filtered.count == 1 ? "result" : "results")")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(DS.Colors.subtext)
+                            Haptics.selection()
+                        } label: {
+                            Text(scope.rawValue)
+                                .font(.system(size: 13, weight: searchScope == scope ? .semibold : .medium))
+                                .foregroundStyle(searchScope == scope ? .black : DS.Colors.text)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(
+                                    searchScope == scope ?
+                                    Color.white :
+                                    DS.Colors.surface2,
+                                    in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                )
                         }
+                        .buttonStyle(.plain)
                     }
-                    .padding(.vertical, 4)
+
+                    Spacer()
+
+                    Text("\(filtered.count) \(filtered.count == 1 ? "result" : "results")")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(DS.Colors.subtext)
                 }
-                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
-                .listRowBackground(DS.Colors.bg)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
             }
 
             // Transactions grouped by day
             if sortOrder == .dateNewest || sortOrder == .dateOldest {
-                // Date sort → group by day
                 ForEach(Analytics.groupedByDay(filtered, ascending: sortOrder == .dateOldest), id: \.day) { group in
-                    Section {
-                        ForEach(group.items) { t in
-                            transactionRowView(for: t)
-                        }
-                    } header: {
-                        Text(group.title)
-                            .font(DS.Typography.caption)
-                            .foregroundStyle(DS.Colors.subtext)
+                    sectionHeader(group.title)
+                    ForEach(group.items) { t in
+                        transactionRowView(for: t)
                     }
                 }
             } else if sortOrder == .categoryAZ {
-                // Category sort → group by category
                 let grouped = Dictionary(grouping: filtered) { $0.category }
                 let sortedKeys = grouped.keys.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
 
                 ForEach(sortedKeys, id: \.self) { cat in
-                    Section {
-                        ForEach(grouped[cat] ?? []) { t in
-                            transactionRowView(for: t)
-                        }
-                    } header: {
-                        HStack(spacing: 6) {
-                            Image(systemName: cat.icon)
-                                .font(.system(size: 10))
-                                .foregroundStyle(cat.tint)
-                            Text(cat.title)
-                                .font(DS.Typography.caption)
-                                .foregroundStyle(DS.Colors.subtext)
-                        }
+                    categorySectionHeader(cat)
+                    ForEach(grouped[cat] ?? []) { t in
+                        transactionRowView(for: t)
                     }
                 }
             } else {
-                // Amount sort → respect filtered order, group consecutive same-day items
                 let groups = groupConsecutiveByDay(filtered)
 
                 ForEach(groups, id: \.id) { group in
-                    Section {
-                        ForEach(group.items) { t in
-                            transactionRowView(for: t)
-                        }
-                    } header: {
-                        Text(group.title)
-                            .font(DS.Typography.caption)
-                            .foregroundStyle(DS.Colors.subtext)
+                    sectionHeader(group.title)
+                    ForEach(group.items) { t in
+                        transactionRowView(for: t)
                     }
                 }
             }
         }
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(DS.Typography.caption)
+            .foregroundStyle(DS.Colors.subtext)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 4)
+    }
+
+    private func categorySectionHeader(_ cat: Category) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: cat.icon)
+                .font(.system(size: 10))
+                .foregroundStyle(cat.tint)
+            Text(cat.title)
+                .font(DS.Typography.caption)
+                .foregroundStyle(DS.Colors.subtext)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.top, 28)
+        .padding(.bottom, 4)
     }
 
     @ViewBuilder
@@ -537,17 +531,9 @@ struct TransactionsView: View {
                     handleRowTap(for: t)
                 }
         }
-        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-        .listRowBackground(Color.clear)
-        .listRowSeparator(.hidden)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 3)
         .transition(.opacity.combined(with: .move(edge: .trailing)))
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button(role: .destructive) {
-                pendingDeleteID = t.id
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
-        }
         .contextMenu {
             contextMenuButtons(for: t)
         } preview: {

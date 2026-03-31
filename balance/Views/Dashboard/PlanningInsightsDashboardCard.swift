@@ -1,14 +1,5 @@
 import SwiftUI
 
-// MARK: - Planning Insights Dashboard Card
-
-/// Surfaces the most important money-guidance insights on the Dashboard.
-/// Combines signals from ForecastEngine and GoalManager to show
-/// actionable alerts: overdue goals, overspending risk, recommended
-/// contributions, and budget warnings.
-///
-/// Design: only shows when there's something worth saying. If everything
-/// is on track, the card is hidden — no noise.
 struct PlanningInsightsDashboardCard: View {
 
     @StateObject private var engine = ForecastEngine.shared
@@ -19,29 +10,50 @@ struct PlanningInsightsDashboardCard: View {
 
         if !insights.isEmpty {
             DS.Card {
-                VStack(alignment: .leading, spacing: 10) {
-                    // Header
-                    HStack(spacing: 5) {
+                VStack(alignment: .leading, spacing: 0) {
+
+                    // ── Header ──
+                    HStack(spacing: 8) {
                         Image(systemName: "lightbulb.fill")
-                            .font(.system(size: 11))
+                            .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(DS.Colors.warning)
-                        Text("Planning Insights")
-                            .font(DS.Typography.caption)
-                            .foregroundStyle(DS.Colors.subtext)
+                            .frame(width: 34, height: 34)
+                            .background(DS.Colors.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Planning Insights")
+                                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                .foregroundStyle(DS.Colors.text)
+                            Text("\(insights.count) item\(insights.count == 1 ? "" : "s") need attention")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(DS.Colors.subtext)
+                        }
+
                         Spacer()
-                        Text("\(insights.count)")
-                            .font(.system(size: 10, weight: .bold, design: .rounded))
-                            .foregroundStyle(DS.Colors.warning)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(DS.Colors.warning.opacity(0.12), in: Capsule())
+
+                        // Severity badge — show highest level
+                        let topColor = insights.first?.color ?? DS.Colors.warning
+                        Circle()
+                            .fill(topColor.opacity(0.15))
+                            .frame(width: 28, height: 28)
+                            .overlay(
+                                Image(systemName: insights.first?.icon ?? "exclamationmark")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(topColor)
+                            )
                     }
+                    .padding(.bottom, 12)
 
-                    ForEach(Array(insights.prefix(4).enumerated()), id: \.offset) { _, insight in
-                        insightRow(insight)
-
-                        if insight.id != insights.prefix(4).last?.id {
-                            Divider().foregroundStyle(DS.Colors.grid)
+                    // ── Insight rows ──
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(insights.prefix(4).enumerated()), id: \.offset) { idx, insight in
+                            if idx > 0 {
+                                Rectangle()
+                                    .fill(DS.Colors.grid.opacity(0.6))
+                                    .frame(height: 0.5)
+                                    .padding(.leading, 36)
+                            }
+                            insightRow(insight)
                         }
                     }
                 }
@@ -53,12 +65,20 @@ struct PlanningInsightsDashboardCard: View {
 
     private func insightRow(_ insight: PlanningInsight) -> some View {
         HStack(alignment: .top, spacing: 10) {
+            // Color bar
+            RoundedRectangle(cornerRadius: 2)
+                .fill(insight.color)
+                .frame(width: 3, height: 36)
+
+            // Icon
             Image(systemName: insight.icon)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(insight.color)
-                .frame(width: 24, height: 24)
+                .frame(width: 22, height: 22)
                 .background(insight.color.opacity(0.1), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .padding(.top, 1)
 
+            // Text
             VStack(alignment: .leading, spacing: 3) {
                 Text(insight.title)
                     .font(.system(size: 13, weight: .semibold))
@@ -69,41 +89,41 @@ struct PlanningInsightsDashboardCard: View {
                     .font(.system(size: 11))
                     .foregroundStyle(DS.Colors.subtext)
                     .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 if let action = insight.actionLabel {
                     Text(action)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(insight.color)
-                        .padding(.top, 1)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(insight.color.opacity(0.1), in: Capsule())
+                        .padding(.top, 2)
                 }
             }
+
+            Spacer(minLength: 0)
         }
+        .padding(.vertical, 10)
     }
 
-    // MARK: - Build Insights (deterministic, priority-ordered)
+    // MARK: - Build Insights
 
     private func buildInsights() -> [PlanningInsight] {
         var insights: [PlanningInsight] = []
-
-        // ── Goal-based insights ──
-
         let snapshot = goalManager.planningSnapshot
 
-        // 1. Overdue goals (highest priority)
-        if snapshot.overdueCount > 0 {
-            if let goal = snapshot.mostUrgentGoal, goal.isOverdue {
-                insights.append(PlanningInsight(
-                    icon: "exclamationmark.triangle.fill",
-                    color: DS.Colors.danger,
-                    title: "\(goal.name) is overdue",
-                    detail: "\(DS.Format.money(goal.remainingAmount)) still needed — deadline passed \(daysAgoText(goal.targetDate))",
-                    actionLabel: "Review goal →",
-                    priority: 100
-                ))
-            }
+        if snapshot.overdueCount > 0, let goal = snapshot.mostUrgentGoal, goal.isOverdue {
+            insights.append(PlanningInsight(
+                icon: "exclamationmark.triangle.fill",
+                color: DS.Colors.danger,
+                title: "\(goal.name) is overdue",
+                detail: "\(DS.Format.money(goal.remainingAmount)) still needed — deadline passed \(daysAgoText(goal.targetDate))",
+                actionLabel: "Review goal",
+                priority: 100
+            ))
         }
 
-        // 2. Behind schedule goals
         let behindNonOverdue = goalManager.behindGoals.filter { !$0.isOverdue }
         if !behindNonOverdue.isEmpty {
             let goal = behindNonOverdue.sorted {
@@ -120,34 +140,29 @@ struct PlanningInsightsDashboardCard: View {
             ))
         }
 
-        // 3. Recommended monthly contribution
         if snapshot.totalRequiredMonthly > 0 && snapshot.activeGoalCount > 0 {
             insights.append(PlanningInsight(
                 icon: "arrow.up.circle",
                 color: DS.Colors.accent,
                 title: "Save \(DS.Format.money(snapshot.totalRequiredMonthly)) this month",
-                detail: "Total needed across \(snapshot.activeGoalCount) active goal\(snapshot.activeGoalCount == 1 ? "" : "s") to stay on track",
+                detail: "Needed across \(snapshot.activeGoalCount) active goal\(snapshot.activeGoalCount == 1 ? "" : "s") to stay on track",
                 actionLabel: nil,
                 priority: 60
             ))
         }
 
-        // ── Forecast-based insights ──
-
         if let f = engine.forecast {
-            // 4. Overcommitted (bills + goals exceed remaining)
             if f.safeToSpend.isOvercommitted {
                 insights.append(PlanningInsight(
                     icon: "xmark.shield.fill",
                     color: DS.Colors.danger,
                     title: "Over-committed by \(DS.Format.money(f.safeToSpend.overcommitAmount))",
                     detail: "Bills (\(DS.Format.money(f.safeToSpend.reservedForBills))) + goals (\(DS.Format.money(f.safeToSpend.reservedForGoals))) exceed remaining budget",
-                    actionLabel: "Adjust goals or budget →",
+                    actionLabel: "Adjust goals or budget",
                     priority: 95
                 ))
             }
 
-            // 5. Already over budget
             if f.currentRemaining < 0 {
                 insights.append(PlanningInsight(
                     icon: "creditcard.trianglebadge.exclamationmark",
@@ -159,19 +174,17 @@ struct PlanningInsightsDashboardCard: View {
                 ))
             }
 
-            // 6. Negative 30-day projection
             if f.projected30Day < 0 && f.riskLevel == .highRisk {
                 insights.append(PlanningInsight(
                     icon: "chart.line.downtrend.xyaxis",
                     color: DS.Colors.danger,
                     title: "30-day outlook is negative",
-                    detail: "Budget remaining projected at \(DS.Format.money(f.projected30Day)) in 30 days",
-                    actionLabel: "Reduce spending to stay positive",
+                    detail: "Projected at \(DS.Format.money(f.projected30Day)) — reduce spending to stay positive",
+                    actionLabel: nil,
                     priority: 85
                 ))
             }
 
-            // 7. Overdue bills
             if f.overdueBillCount > 0 {
                 insights.append(PlanningInsight(
                     icon: "bell.badge.fill",
@@ -183,19 +196,17 @@ struct PlanningInsightsDashboardCard: View {
                 ))
             }
 
-            // 8. No budget set warning
             if f.budgetIsMissing && f.safeToSpend.totalAmount > 0 {
                 insights.append(PlanningInsight(
                     icon: "questionmark.circle",
                     color: DS.Colors.subtext,
                     title: "No budget set",
-                    detail: "Safe-to-spend is estimated from your income history. Set a budget for better accuracy.",
-                    actionLabel: "Set budget →",
+                    detail: "Safe-to-spend is estimated from income history. Set a budget for better accuracy.",
+                    actionLabel: "Set budget",
                     priority: 30
                 ))
             }
 
-            // 9. Low data confidence warning
             if f.dataConfidence == .low {
                 insights.append(PlanningInsight(
                     icon: "chart.bar.xaxis",
@@ -208,14 +219,11 @@ struct PlanningInsightsDashboardCard: View {
             }
         }
 
-        // Sort by priority (highest first) and return
         return insights.sorted { $0.priority > $1.priority }
     }
 
-    // MARK: - Helpers
-
     private func daysAgoText(_ date: Date?) -> String {
-        guard let date = date else { return "" }
+        guard let date else { return "" }
         let days = Calendar.current.dateComponents([.day], from: date, to: Date()).day ?? 0
         if days == 0 { return "today" }
         if days == 1 { return "yesterday" }
@@ -223,7 +231,7 @@ struct PlanningInsightsDashboardCard: View {
     }
 }
 
-// MARK: - Planning Insight Model
+// MARK: - Model
 
 private struct PlanningInsight: Identifiable {
     let id = UUID()
@@ -232,5 +240,5 @@ private struct PlanningInsight: Identifiable {
     let title: String
     let detail: String
     let actionLabel: String?
-    let priority: Int  // higher = more urgent, shown first
+    let priority: Int
 }

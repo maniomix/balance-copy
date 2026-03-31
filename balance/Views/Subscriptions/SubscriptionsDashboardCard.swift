@@ -1,9 +1,5 @@
 import SwiftUI
 
-// ============================================================
-// MARK: - Subscriptions Dashboard Card (v3 — Modern)
-// ============================================================
-
 struct SubscriptionsDashboardCard: View {
     @StateObject private var engine = SubscriptionEngine.shared
 
@@ -12,124 +8,151 @@ struct SubscriptionsDashboardCard: View {
             NavigationLink(destination: SubscriptionsOverviewView()) {
                 VStack(alignment: .leading, spacing: 0) {
 
-                    // ── Top section: icon + title + cost ──
-                    HStack(spacing: 12) {
-                        // Icon box
+                    // ── Header ──
+                    HStack(spacing: 10) {
                         Image(systemName: "creditcard.and.123")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(DS.Colors.accent)
-                            .frame(width: 34, height: 34)
+                            .frame(width: 36, height: 36)
                             .background(DS.Colors.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Subscriptions")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(DS.Colors.text)
-
-                            HStack(spacing: 4) {
-                                Text(DS.Format.money(engine.monthlyTotal))
-                                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                                    .foregroundStyle(DS.Colors.text)
-                                Text("/mo")
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundStyle(DS.Colors.subtext)
-                            }
-                        }
+                        Text("Subscriptions")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(DS.Colors.text)
 
                         Spacer()
 
-                        // Active count + chevron
-                        VStack(alignment: .trailing, spacing: 4) {
-                            HStack(spacing: 4) {
-                                Text("\(engine.activeCount)")
-                                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                                    .foregroundStyle(DS.Colors.positive)
-                                Text("active")
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundStyle(DS.Colors.subtext)
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 9, weight: .semibold))
-                                    .foregroundStyle(DS.Colors.subtext.opacity(0.4))
-                            }
-
-                            Text(DS.Format.money(engine.yearlyTotal) + "/yr")
-                                .font(.system(size: 10, weight: .medium, design: .rounded))
-                                .foregroundStyle(DS.Colors.subtext.opacity(0.6))
-                        }
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(DS.Colors.subtext.opacity(0.4))
                     }
-                    .padding(14)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 14)
+                    .padding(.bottom, 12)
+
+                    // ── Stats row ──
+                    HStack(spacing: 0) {
+                        statCell(
+                            value: DS.Format.money(engine.monthlyTotal),
+                            label: "per month"
+                        )
+
+                        Divider()
+                            .frame(height: 28)
+
+                        statCell(
+                            value: DS.Format.money(engine.yearlyTotal),
+                            label: "per year"
+                        )
+
+                        Divider()
+                            .frame(height: 28)
+
+                        statCell(
+                            value: "\(engine.activeCount)",
+                            label: "active"
+                        )
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 12)
 
                     // ── Divider ──
                     Rectangle()
-                        .fill(DS.Colors.grid.opacity(0.5))
+                        .fill(DS.Colors.grid.opacity(0.6))
                         .frame(height: 0.5)
                         .padding(.horizontal, 14)
 
-                    // ── Bottom section: next renewal + alerts ──
-                    VStack(alignment: .leading, spacing: 8) {
-                        // Next renewal
-                        if let next = engine.upcomingRenewals.first {
-                            HStack(spacing: 8) {
-                                Image(systemName: next.category.icon)
-                                    .font(.system(size: 9, weight: .semibold))
-                                    .foregroundStyle(next.category.tint)
-                                    .frame(width: 20, height: 20)
-                                    .background(next.category.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    // ── Next renewal ──
+                    if let next = engine.upcomingRenewals.first {
+                        HStack(spacing: 10) {
+                            Image(systemName: next.category.icon)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(next.category.tint)
+                                .frame(width: 24, height: 24)
+                                .background(next.category.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
 
+                            VStack(alignment: .leading, spacing: 1) {
                                 Text(next.merchantName.capitalized)
-                                    .font(.system(size: 11, weight: .medium))
+                                    .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(DS.Colors.text)
                                     .lineLimit(1)
+                                Text("Next renewal")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(DS.Colors.subtext)
+                            }
 
+                            Spacer()
+
+                            VStack(alignment: .trailing, spacing: 1) {
                                 Text(DS.Format.money(next.expectedAmount))
-                                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                                    .font(.system(size: 12, weight: .bold, design: .rounded))
                                     .foregroundStyle(DS.Colors.text)
 
-                                Spacer()
-
                                 if let days = next.daysUntilRenewal {
-                                    Text(days < 0 ? "\(abs(days))d overdue" : days == 0 ? "today" : days == 1 ? "tomorrow" : "in \(days)d")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundStyle(days < 0 ? DS.Colors.danger : days <= 3 ? DS.Colors.warning : DS.Colors.subtext)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 3)
-                                        .background(
-                                            (days < 0 ? DS.Colors.danger : days <= 3 ? DS.Colors.warning : DS.Colors.subtext).opacity(0.1),
-                                            in: Capsule()
-                                        )
+                                    let isOverdue = days < 0
+                                    let isUrgent = days >= 0 && days <= 3
+                                    Text(isOverdue ? "\(abs(days))d overdue" : days == 0 ? "today" : days == 1 ? "tomorrow" : "in \(days)d")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(isOverdue ? DS.Colors.danger : isUrgent ? DS.Colors.warning : DS.Colors.subtext)
                                 }
                             }
                         }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
 
-                        // Alert pills
+                        // ── Alert pills ──
                         let snapshot = engine.dashboardSnapshot
                         let pills = buildAlertPills(snapshot)
                         if !pills.isEmpty {
+                            Rectangle()
+                                .fill(DS.Colors.grid.opacity(0.6))
+                                .frame(height: 0.5)
+                                .padding(.horizontal, 14)
+
                             HStack(spacing: 6) {
                                 ForEach(pills.prefix(3), id: \.text) { pill in
-                                    HStack(spacing: 3) {
+                                    HStack(spacing: 4) {
                                         Image(systemName: pill.icon)
-                                            .font(.system(size: 8))
+                                            .font(.system(size: 9))
                                         Text(pill.text)
-                                            .font(.system(size: 9, weight: .semibold))
+                                            .font(.system(size: 10, weight: .semibold))
                                     }
                                     .foregroundStyle(pill.color)
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
                                     .background(pill.color.opacity(0.08), in: Capsule())
                                 }
                                 Spacer()
                             }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                        } else {
+                            Spacer().frame(height: 4)
                         }
+                    } else {
+                        Spacer().frame(height: 14)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
                 }
                 .background(DS.Colors.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                
             }
             .buttonStyle(.plain)
         }
+    }
+
+    // MARK: - Stat Cell
+
+    private func statCell(value: String, label: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.system(size: 14, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(DS.Colors.text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(label)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(DS.Colors.subtext)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Alert Pills
@@ -142,7 +165,6 @@ struct SubscriptionsDashboardCard: View {
 
     private func buildAlertPills(_ snapshot: SubscriptionSnapshot) -> [AlertPill] {
         var pills: [AlertPill] = []
-
         if snapshot.missedChargeCount > 0 {
             pills.append(AlertPill(icon: "exclamationmark.triangle.fill", text: "\(snapshot.missedChargeCount) missed", color: DS.Colors.warning))
         }
@@ -152,14 +174,12 @@ struct SubscriptionsDashboardCard: View {
         if snapshot.unusedCount > 0 {
             pills.append(AlertPill(icon: "questionmark.circle.fill", text: "Save \(DS.Format.money(snapshot.potentialSavings))/mo", color: Color(hexValue: 0x9B59B6)))
         }
-
         let badges = engine.insights.filter {
             $0 != .upcomingRenewal && $0 != .priceIncreased && $0 != .maybeUnused && $0 != .missedCharge
         }
         for insight in badges.prefix(max(0, 3 - pills.count)) {
             pills.append(AlertPill(icon: insight.icon, text: insight.displayName, color: insight.color))
         }
-
         return pills
     }
 }
