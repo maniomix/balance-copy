@@ -200,6 +200,7 @@ struct SubscriptionsOverviewView: View {
             VStack(spacing: 8) {
                 ForEach(engine.insights) { insight in
                     Button {
+                        Haptics.selection()
                         selectedInsight = insight
                     } label: {
                         HStack(spacing: 10) {
