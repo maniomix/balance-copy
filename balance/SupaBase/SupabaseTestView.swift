@@ -1,6 +1,10 @@
 import SwiftUI
 import Supabase
 
+#if DEBUG
+/// Debug-only connection harness. Not wired into any production flow —
+/// compiled out of Release builds so it cannot accidentally ship or be
+/// reached via a stray NavigationLink.
 struct SupabaseTestView: View {
     @EnvironmentObject private var authManager: AuthManager
     private var supabase: SupabaseManager { SupabaseManager.shared }
@@ -84,3 +88,4 @@ struct SupabaseTestView: View {
 #Preview {
     SupabaseTestView()
 }
+#endif
