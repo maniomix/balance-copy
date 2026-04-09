@@ -293,7 +293,10 @@ struct SubscriptionDetailView: View {
 
                     infoRow(icon: "clock", label: "Days Until", value: {
                         if let days = liveSub.daysUntilRenewal {
-                            return days == 0 ? "Today" : "\(days) days"
+                            if days < 0 { return "\(abs(days))d overdue" }
+                            if days == 0 { return "Today" }
+                            if days == 1 { return "Tomorrow" }
+                            return "\(days) days"
                         }
                         return "—"
                     }())
