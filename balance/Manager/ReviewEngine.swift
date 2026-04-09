@@ -247,11 +247,18 @@ class ReviewEngine: ObservableObject {
     func markDuplicate(item: ReviewItem, store: inout Store) {
         // Keep the first transaction, remove the rest
         let idsToRemove = Array(item.transactionIds.dropFirst())
+        var removedIds = Set<UUID>()
         for txId in idsToRemove {
             if store.transactions.contains(where: { $0.id == txId }) {
                 store.transactions.removeAll { $0.id == txId }
                 store.trackDeletion(of: txId)
+                removedIds.insert(txId)
             }
+        }
+        // Cascade: drop any split expenses tied to the removed duplicates so
+        // Household doesn't end up with orphans pointing at nothing.
+        if !removedIds.isEmpty {
+            HouseholdManager.shared.removeSplitExpenses(forTransactions: removedIds)
         }
         resolve(item)
     }

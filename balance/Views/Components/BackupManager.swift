@@ -154,6 +154,7 @@ struct BackupManager {
             return .success(validation.accepted.count)
 
         case .replace:
+            let wipedIds = Set(store.transactions.map { $0.id })
             for tx in store.transactions {
                 store.trackDeletion(of: tx.id)
             }
@@ -161,6 +162,10 @@ struct BackupManager {
             store.budgetsByMonth.removeAll()
             store.customCategoryNames.removeAll()
             store.categoryBudgetsByMonth.removeAll()
+            // Cascade: drop household split expenses tied to the wiped transactions.
+            if !wipedIds.isEmpty {
+                HouseholdManager.shared.removeSplitExpenses(forTransactions: wipedIds)
+            }
 
             let validation = store.validateForImport(
                 backup.transactions,

@@ -477,10 +477,15 @@ struct ImportTransactionsScreen: View {
         // If mode is Replace, track all existing transactions as deleted (for cloud sync)
         // then clear them. Without trackDeletion, the cloud would never learn these were removed.
         if mode == .replace {
+            let wipedIds = Set(store.transactions.map { $0.id })
             for tx in store.transactions {
                 store.trackDeletion(of: tx.id)
             }
             store.transactions.removeAll()
+            // Cascade: drop household split expenses tied to the wiped transactions.
+            if !wipedIds.isEmpty {
+                HouseholdManager.shared.removeSplitExpenses(forTransactions: wipedIds)
+            }
         }
 
         // Build a signature set for existing transactions so we can prevent re-importing
