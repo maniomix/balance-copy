@@ -30,9 +30,14 @@ class AuthManager: ObservableObject {
     @Published var currentUser: User?
     @Published var isCheckingSession = true  // prevents login screen flash
 
-    /// Number of consecutive failed sign-in attempts (local rate limiting).
+    /// Local rate-limit state. Each sensitive auth surface tracks attempts
+    /// independently so a lockout on one flow doesn't block the others.
     private var failedSignInAttempts: Int = 0
-    private var lastFailedAttempt: Date?
+    private var lastFailedSignIn: Date?
+    private var signUpAttempts: Int = 0
+    private var lastSignUpAttempt: Date?
+    private var resetPasswordAttempts: Int = 0
+    private var lastResetPasswordAttempt: Date?
     private let maxFailedAttempts: Int = 5
     private let lockoutDuration: TimeInterval = 300 // 5 minutes
 
@@ -99,9 +104,25 @@ class AuthManager: ObservableObject {
         try validatePassword(password)
         try validateDisplayName(displayName)
 
+        // Throttle: don't let attackers spam the signup endpoint
+        try checkSignUpLockout()
+
         SecureLogger.info("Starting sign up")
-        try await supabase.signUp(email: email, password: password, displayName: displayName)
-        SecureLogger.info("Sign up completed")
+        do {
+            try await supabase.signUp(email: email, password: password, displayName: displayName)
+            signUpAttempts = 0
+            lastSignUpAttempt = nil
+            SecureLogger.info("Sign up completed")
+        } catch {
+            signUpAttempts += 1
+            lastSignUpAttempt = Date()
+            SecureLogger.security("Sign up failed (attempt \(signUpAttempts))")
+            if signUpAttempts >= maxFailedAttempts {
+                SecureLogger.security("Sign up locked out after \(maxFailedAttempts) failed attempts")
+                throw AuthError.lockedOut
+            }
+            throw error
+        }
 
         // Manually update auth state
         do {
@@ -119,17 +140,17 @@ class AuthManager: ObservableObject {
 
     func signIn(email: String, password: String) async throws {
         // Check lockout
-        try checkLockout()
+        try checkSignInLockout()
 
         do {
             try await supabase.signIn(email: email, password: password)
             // Reset on success
             failedSignInAttempts = 0
-            lastFailedAttempt = nil
+            lastFailedSignIn = nil
             SecureLogger.info("Sign in successful")
         } catch {
             failedSignInAttempts += 1
-            lastFailedAttempt = Date()
+            lastFailedSignIn = Date()
             SecureLogger.security("Sign in failed (attempt \(failedSignInAttempts))")
 
             if failedSignInAttempts >= maxFailedAttempts {
@@ -156,8 +177,23 @@ class AuthManager: ObservableObject {
 
     func resetPassword(email: String) async throws {
         try validateEmail(email)
-        try await supabase.resetPassword(email: email)
-        SecureLogger.info("Password reset email sent")
+        // Throttle: prevents both brute-force probing and email-bombing an inbox
+        try checkResetPasswordLockout()
+        do {
+            try await supabase.resetPassword(email: email)
+            resetPasswordAttempts = 0
+            lastResetPasswordAttempt = nil
+            SecureLogger.info("Password reset email sent")
+        } catch {
+            resetPasswordAttempts += 1
+            lastResetPasswordAttempt = Date()
+            SecureLogger.security("Password reset failed (attempt \(resetPasswordAttempts))")
+            if resetPasswordAttempts >= maxFailedAttempts {
+                SecureLogger.security("Password reset locked out after \(maxFailedAttempts) attempts")
+                throw AuthError.lockedOut
+            }
+            throw error
+        }
     }
 
     // MARK: - Change Password
@@ -227,18 +263,40 @@ class AuthManager: ObservableObject {
         }
     }
 
-    private func checkLockout() throws {
-        guard failedSignInAttempts >= maxFailedAttempts,
-              let lastFail = lastFailedAttempt else { return }
+    private func checkSignInLockout() throws {
+        try enforceLockout(
+            attempts: &failedSignInAttempts,
+            lastAttempt: &lastFailedSignIn
+        )
+    }
+
+    private func checkSignUpLockout() throws {
+        try enforceLockout(
+            attempts: &signUpAttempts,
+            lastAttempt: &lastSignUpAttempt
+        )
+    }
+
+    private func checkResetPasswordLockout() throws {
+        try enforceLockout(
+            attempts: &resetPasswordAttempts,
+            lastAttempt: &lastResetPasswordAttempt
+        )
+    }
+
+    /// Shared lockout policy used by sign-in, sign-up, and password reset.
+    /// If the threshold has been reached and the window hasn't elapsed, throws
+    /// `AuthError.lockedOut`. Otherwise clears expired state and returns.
+    private func enforceLockout(attempts: inout Int, lastAttempt: inout Date?) throws {
+        guard attempts >= maxFailedAttempts, let lastFail = lastAttempt else { return }
 
         let elapsed = Date().timeIntervalSince(lastFail)
         if elapsed < lockoutDuration {
-            let remaining = Int(lockoutDuration - elapsed)
             throw AuthError.lockedOut
         } else {
-            // Lockout expired
-            failedSignInAttempts = 0
-            lastFailedAttempt = nil
+            // Lockout expired — reset counters
+            attempts = 0
+            lastAttempt = nil
         }
     }
 
