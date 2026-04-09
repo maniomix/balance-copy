@@ -317,7 +317,17 @@ class SyncCoordinator: ObservableObject {
 
         periodicTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: UInt64(self?.periodicInterval ?? 120) * 1_000_000_000)
+                // Sleep: normally periodicInterval, but after a recent failure
+                // use exponential backoff (backoffDelay) so a flaky server
+                // isn't hammered every 120 s for the full retry window.
+                let sleepNs: UInt64 = {
+                    guard let self else { return UInt64(120) * 1_000_000_000 }
+                    if self.retryCount > 0 && self.retryCount < self.maxRetries {
+                        return self.backoffDelay
+                    }
+                    return UInt64(self.periodicInterval) * 1_000_000_000
+                }()
+                try? await Task.sleep(nanoseconds: sleepNs)
                 guard !Task.isCancelled else { break }
                 guard let self else { break }
 
