@@ -543,12 +543,17 @@ struct TransactionsView: View {
 
     @ViewBuilder
     private func selectionCheckmark(for t: Transaction) -> some View {
-        Image(systemName: selectedTxIDs.contains(t.id) ? "checkmark.circle.fill" : "circle")
-            .foregroundStyle(selectedTxIDs.contains(t.id) ? DS.Colors.positive : DS.Colors.subtext)
-            .font(.system(size: 18))
-            .onTapGesture {
-                toggleSelection(for: t.id)
-            }
+        let isSelected = selectedTxIDs.contains(t.id)
+        Button {
+            toggleSelection(for: t.id)
+        } label: {
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(isSelected ? DS.Colors.positive : DS.Colors.subtext)
+                .font(.system(size: 18))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isSelected ? "Selected" : "Not selected")
+        .accessibilityAddTraits(.isButton)
     }
 
     @ViewBuilder
