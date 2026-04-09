@@ -294,6 +294,7 @@ struct SubscriptionsOverviewView: View {
                         .frame(width: 32, height: 32)
                         .background(DS.Colors.accent.opacity(0.1), in: Circle())
                 }
+                .accessibilityLabel("Sort subscriptions")
             }
             .padding(.horizontal)
         }
@@ -639,6 +640,7 @@ private struct InsightDetailSheet: View {
                         .font(.system(size: 20))
                         .foregroundStyle(DS.Colors.subtext.opacity(0.4))
                 }
+                .accessibilityLabel("Remove subscription")
             }
         }
         .padding(.horizontal)

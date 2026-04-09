@@ -36,6 +36,7 @@ struct RecentTransactionsDashboardCard: View {
                                 }
                                 .foregroundStyle(DS.Colors.subtext)
                             }
+                            .accessibilityLabel("View all transactions")
                         } else {
                             Text("\(Analytics.monthTransactions(store: store).count) total")
                                 .font(DS.Typography.caption)
@@ -55,9 +56,10 @@ struct RecentTransactionsDashboardCard: View {
                                     .frame(width: 32, height: 32)
                                     .overlay(
                                         Image(systemName: "arrow.down.circle.fill")
-                                            .foregroundStyle(.green)
+                                            .foregroundStyle(DS.Colors.positive)
                                             .font(.system(size: 14, weight: .semibold))
                                     )
+                                    .accessibilityLabel("Income")
                             } else {
                                 Circle()
                                     .fill(t.category.tint.opacity(0.15))

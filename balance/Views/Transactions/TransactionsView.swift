@@ -765,6 +765,7 @@ private struct TransactionsTrailingButtons: View {
             }
             .buttonStyle(.plain)
             .disabled(disabled)
+            .accessibilityLabel("Recurring transactions")
             .alert("pro user access only", isPresented: $showProAlert) {
                 Button("OK", role: .cancel) {}
             } message: {
@@ -779,6 +780,7 @@ private struct TransactionsTrailingButtons: View {
             }
             .buttonStyle(.plain)
             .disabled(disabled)
+            .accessibilityLabel("Import transactions")
 
             // Sort button with menu
             Menu {
@@ -803,6 +805,7 @@ private struct TransactionsTrailingButtons: View {
             }
             .buttonStyle(.plain)
             .disabled(disabled)
+            .accessibilityLabel("Sort transactions")
 
             Button { showFilters = true } label: {
                 ZStack(alignment: .center) {
@@ -824,6 +827,7 @@ private struct TransactionsTrailingButtons: View {
             }
             .buttonStyle(.plain)
             .disabled(disabled)
+            .accessibilityLabel(filtersActive ? "Filters active" : "Filter transactions")
 
             Button { showAdd = true } label: {
                 Image(systemName: "plus.circle")  // ← Circle version
@@ -833,6 +837,7 @@ private struct TransactionsTrailingButtons: View {
             }
             .buttonStyle(.plain)
             .disabled(disabled)
+            .accessibilityLabel("Add transaction")
         }
     }
 }
