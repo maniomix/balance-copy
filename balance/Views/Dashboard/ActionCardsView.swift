@@ -97,9 +97,9 @@ struct ActionCardView: View {
         Group {
             switch card.priority {
             case .critical:
-                Circle().fill(.red).frame(width: 8, height: 8)
+                Circle().fill(DS.Colors.danger).frame(width: 8, height: 8)
             case .high:
-                Circle().fill(.orange).frame(width: 6, height: 6)
+                Circle().fill(DS.Colors.warning).frame(width: 6, height: 6)
             default:
                 EmptyView()
             }
@@ -108,8 +108,8 @@ struct ActionCardView: View {
 
     private var borderColor: Color {
         switch card.priority {
-        case .critical: return .red
-        case .high: return .orange
+        case .critical: return DS.Colors.danger
+        case .high: return DS.Colors.warning
         case .medium: return DS.Colors.grid
         case .low: return DS.Colors.grid
         }

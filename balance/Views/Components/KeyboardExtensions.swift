@@ -19,7 +19,7 @@ extension View {
                     Button("Done") {
                         hideKeyboard()
                     }
-                    .foregroundColor(.blue)
+                    .foregroundColor(DS.Colors.accent)
                 }
             }
     }

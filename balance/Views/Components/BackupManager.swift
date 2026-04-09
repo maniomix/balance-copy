@@ -311,7 +311,7 @@ struct BackupDataSection: View {
                 } label: {
                     HStack {
                         Image(systemName: "arrow.down.doc")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(DS.Colors.warning)
                         Text("Restore from Backup")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(DS.Colors.text)

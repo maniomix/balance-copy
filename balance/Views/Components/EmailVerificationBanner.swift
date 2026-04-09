@@ -16,7 +16,7 @@ struct EmailVerificationBanner: View {
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
                     Image(systemName: "envelope.badge.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(DS.Colors.warning)
                         .font(.system(size: 20))
                     
                     VStack(alignment: .leading, spacing: 4) {
@@ -88,7 +88,7 @@ struct EmailVerificationBanner: View {
                 if showSuccess {
                     HStack {
                         Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
+                            .foregroundStyle(DS.Colors.positive)
                         Text("Verification email sent! Check your inbox.")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.white)

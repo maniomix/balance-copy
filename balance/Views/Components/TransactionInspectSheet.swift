@@ -144,7 +144,7 @@ struct TransactionInspectSheet: View {
                                         HStack(spacing: 12) {
                                             Image(systemName: "paperclip")
                                                 .font(.system(size: 16, weight: .semibold))
-                                                .foregroundStyle(.blue)
+                                                .foregroundStyle(DS.Colors.accent)
 
                                             VStack(alignment: .leading, spacing: 2) {
                                                 Text(type == .image ? "Image" : "PDF Document")

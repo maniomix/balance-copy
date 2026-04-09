@@ -234,7 +234,7 @@ struct TutorialCardView: View {
             HStack(spacing: 12) {
                 Image(systemName: "play.circle.fill")
                     .font(.system(size: 24))
-                    .foregroundColor(.green)
+                    .foregroundColor(DS.Colors.positive)
                 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("View Tutorial")

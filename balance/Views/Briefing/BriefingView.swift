@@ -168,7 +168,7 @@ struct BriefingView: View {
                     if forecast.overdueBillCount > 0 {
                         Text("\(forecast.overdueBillCount) overdue")
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.red)
+                            .foregroundStyle(DS.Colors.danger)
                     }
                 }
 

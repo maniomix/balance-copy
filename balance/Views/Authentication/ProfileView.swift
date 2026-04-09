@@ -436,14 +436,14 @@ struct ProfileView: View {
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.red.opacity(0.5))
+                    .foregroundStyle(DS.Colors.danger.opacity(0.5))
             }
-            .foregroundStyle(.red)
+            .foregroundStyle(DS.Colors.danger)
             .padding(14)
-            .background(Color.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(DS.Colors.danger.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.red.opacity(0.1), lineWidth: 0.8)
+                    .stroke(DS.Colors.danger.opacity(0.1), lineWidth: 0.8)
             )
         }
         .padding(.top, 8)
