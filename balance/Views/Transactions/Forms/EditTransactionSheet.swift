@@ -327,6 +327,7 @@ struct EditTransactionSheet: View {
             attachmentData: oldTransaction.attachmentData,
             attachmentType: oldTransaction.attachmentType,
             accountId: selectedAccountId,
+            isFlagged: oldTransaction.isFlagged,
             linkedGoalId: selectedGoalId,
             lastModified: Date()
         )
