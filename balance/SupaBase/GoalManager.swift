@@ -52,6 +52,7 @@ class GoalManager: ObservableObject {
     // MARK: - Create Goal
 
     func createGoal(_ goal: Goal) async -> Bool {
+        errorMessage = nil
         do {
             try await client.from("goals").insert(goal).execute()
             SecureLogger.info("Goal created")
@@ -72,6 +73,7 @@ class GoalManager: ObservableObject {
     // MARK: - Update Goal
 
     func updateGoal(_ goal: Goal) async -> Bool {
+        errorMessage = nil
         var updated = goal
         updated.updatedAt = Date()
 
@@ -80,10 +82,15 @@ class GoalManager: ObservableObject {
                 .update(updated)
                 .eq("id", value: updated.id.uuidString)
                 .execute()
+            SecureLogger.info("Goal updated")
             await fetchGoals()
             return true
         } catch {
-            errorMessage = AppConfig.shared.safeErrorMessage(detail: error.localizedDescription)
+            errorMessage = AppConfig.shared.safeErrorMessage(
+                detail: error.localizedDescription,
+                fallback: "Could not update goal. Please try again."
+            )
+            SecureLogger.error("Update goal failed", error)
             return false
         }
     }
@@ -95,6 +102,7 @@ class GoalManager: ObservableObject {
             SecureLogger.warning("deleteGoal: No authenticated user")
             return false
         }
+        errorMessage = nil
 
         do {
             // Delete contributions first (scoped to user's goal)
@@ -139,6 +147,7 @@ class GoalManager: ObservableObject {
             note: note,
             source: source
         )
+        errorMessage = nil
 
         do {
             try await client.from("goal_contributions").insert(contribution).execute()
@@ -179,6 +188,7 @@ class GoalManager: ObservableObject {
             note: note ?? "Withdrawal",
             source: .manual
         )
+        errorMessage = nil
 
         do {
             try await client.from("goal_contributions").insert(contribution).execute()
