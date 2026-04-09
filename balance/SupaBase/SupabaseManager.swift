@@ -18,7 +18,11 @@ import Combine
 class SupabaseManager: ObservableObject {
     static let shared = SupabaseManager()
 
-    var client: SupabaseClient! // Used by AuthManager for auth operations
+    /// Implicitly-unwrapped because `setupClient()` guarantees assignment at
+    /// init time — if configuration is missing it crashes loudly via
+    /// `preconditionFailure` rather than leaving `client` nil for a later
+    /// call site to discover with a mystery IUO crash.
+    var client: SupabaseClient!
 
     /// Tracks whether a sync operation is in progress (used internally).
     @Published var isSyncing = false
@@ -36,8 +40,13 @@ class SupabaseManager: ObservableObject {
 
         guard !config.supabaseURL.isEmpty, !config.supabaseAnonKey.isEmpty,
               let supabaseURL = URL(string: config.supabaseURL) else {
+            // Crash immediately with a clear diagnostic instead of limping
+            // forward with a nil `client` that will crash later via IUO
+            // unwrap at some random auth/sync call site. The app is
+            // unusable without backend config, so failing at launch is
+            // strictly better than failing mid-session.
             SecureLogger.error("Missing Supabase configuration. Check Config.plist.")
-            return
+            preconditionFailure("Supabase configuration missing or invalid — cannot start app. See Security/SECURITY.md.")
         }
 
         client = SupabaseClient(
