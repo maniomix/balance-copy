@@ -326,7 +326,10 @@ struct ReportExportView: View {
             } catch {
                 await MainActor.run {
                     isGenerating = false
-                    errorMessage = "Failed to save PDF: \(error.localizedDescription)"
+                    errorMessage = AppConfig.shared.safeErrorMessage(
+                        detail: "Failed to save PDF: \(error.localizedDescription)",
+                        fallback: "Failed to save PDF. Please try again."
+                    )
                     Haptics.error()
                 }
             }

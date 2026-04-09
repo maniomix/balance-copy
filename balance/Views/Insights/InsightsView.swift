@@ -467,7 +467,10 @@ struct InsightsView: View {
             } catch {
                 await MainActor.run {
                     notificationsEnabled = false
-                    notifDetail = "Couldn't request permission: \(error.localizedDescription)"
+                    notifDetail = AppConfig.shared.safeErrorMessage(
+                        detail: "Couldn't request permission: \(error.localizedDescription)",
+                        fallback: "Couldn't request notification permission."
+                    )
                 }
             }
         @unknown default:
@@ -513,7 +516,10 @@ struct InsightsView: View {
             }
         } catch {
             await MainActor.run {
-                notifDetail = "Failed to schedule notification: \(error.localizedDescription)"
+                notifDetail = AppConfig.shared.safeErrorMessage(
+                    detail: "Failed to schedule notification: \(error.localizedDescription)",
+                    fallback: "Failed to schedule notification."
+                )
             }
         }
     }
@@ -592,7 +598,10 @@ struct InsightsView: View {
             self.shareURL = url
         } catch {
             Haptics.error()  // ← هاپتیک خطا
-            self.notifDetail = "Export failed: \(error.localizedDescription)"
+            self.notifDetail = AppConfig.shared.safeErrorMessage(
+                detail: "Export failed: \(error.localizedDescription)",
+                fallback: "Export failed. Please try again."
+            )
         }
     }
 }
