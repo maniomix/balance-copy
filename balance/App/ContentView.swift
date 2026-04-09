@@ -55,6 +55,11 @@ struct ContentView: View {
         }
         SecureLogger.info("Local data loaded: \(store.transactions.count) transactions")
 
+        // Defense-in-depth: drop orphan split expenses left by prior bypass-delete bugs.
+        HouseholdManager.shared.sweepOrphanSplitExpenses(
+            knownTransactionIds: Set(store.transactions.map(\.id))
+        )
+
         // 2. Sync from cloud in background
         Task {
             if var cloudStore = await syncCoordinator.pullFromCloud(localStore: store, userId: userId) {

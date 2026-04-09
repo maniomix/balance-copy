@@ -264,6 +264,22 @@ class HouseholdManager: ObservableObject {
         if splitExpenses.count != before { save() }
     }
 
+    /// Launch-time defense-in-depth sweep: drop any split expense whose linked
+    /// transaction no longer exists in the store. Catches orphans left behind
+    /// by prior bypass-delete bugs (import replace, backup restore replace,
+    /// review-duplicate-merge) before P6.1's cascade fixes were in place.
+    ///
+    /// Call this after both the store and HouseholdManager have loaded locally.
+    func sweepOrphanSplitExpenses(knownTransactionIds: Set<UUID>) {
+        let before = splitExpenses.count
+        splitExpenses.removeAll { !knownTransactionIds.contains($0.transactionId) }
+        let removed = before - splitExpenses.count
+        if removed > 0 {
+            SecureLogger.info("Orphan split-expense sweep removed \(removed) record(s)")
+            save()
+        }
+    }
+
     func markExpenseSettled(id: UUID) {
         if let idx = splitExpenses.firstIndex(where: { $0.id == id }) {
             splitExpenses[idx].isSettled = true
