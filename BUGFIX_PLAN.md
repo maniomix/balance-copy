@@ -1,5 +1,120 @@
 # Balance App — End-to-End Bug Analysis & Fix Plan
 
+---
+
+## Verification Pass — 2026-04-09
+
+This document was written against an older snapshot of the codebase. A
+verification pass confirms that most of the 6 originally-listed bugs are
+already fixed, but surfaces new partial-fix hazards and one bonus bug not
+in the original list. The detailed analysis below is kept for history.
+
+### Status summary
+
+| # | Bug | Status | Remaining work |
+|---|-----|--------|----------------|
+| 1 | ReviewEngine `resolve()` not persisting | ✅ **Fixed** | None |
+| 2 | Subscription insight banners non-interactive | ✅ **Fixed** | Optional: add haptic on tap (nice-to-have) |
+| 3 | Subscription "In -16 days" display | ⚠️ **Partial** | `SubscriptionDetailView.swift:296` still renders raw negative days |
+| 4 | Goal save silent failure | ✅ **Fixed** | Minor: `GoalManager.errorMessage` never cleared on success (masked by view-level nil-out) |
+| 5 | Orphaned SplitExpense on tx delete | ⚠️ **Partial** | 3 delete paths bypass the cascade; no launch-time orphan sweep |
+| 6 | AddTransaction missing Account/Goal linking | ✅ **Fixed** | Both Add and Edit sheets wire Account + Goal |
+| * | **NEW** — Edit sheet discards `isFlagged` | 🔴 **Open** | `EditTransactionSheet.saveChanges()` builds new Transaction without passing `isFlagged`, silently unflagging on any edit |
+
+### Detailed verification notes
+
+**BUG #1 — ReviewEngine `resolve()` not persisting** ✅
+
+- `Manager/ReviewEngine.swift:204-213` — `resolve()` calls `addDismissedKey(item.stableKey)` and removes the item from `items`. `dismiss()` is symmetric.
+- `addDismissedKey` writes to `dismissedStableKeys` (Set) + `dismissedStableKeysOrdered` (Array, for capped LRU eviction), persisted under `UserDefaults` key `review.dismissed_keys` (500-entry cap).
+- `analyze()` at `Manager/ReviewEngine.swift:180` filters `result.filter { !dismissedStableKeys.contains($0.stableKey) }` so resolved items cannot re-spawn.
+- `stableKey` is deterministic: `Manager/ReviewItem.swift:184` — `type.rawValue + ":" + sorted txId uuidStrings joined by "|"`. Same transactions + same type always produce the same key, so the filter actually matches.
+
+**BUG #2 — Subscription insight banners non-interactive** ✅
+
+- `Views/Subscriptions/SubscriptionsOverviewView.swift:198-247` — `insightBanners` wraps each banner in a `Button { selectedInsight = insight }` with a trailing `chevron.right`. The parent `.sheet(item: $selectedInsight)` presents `InsightDetailSheet` (defined in the same file at line 523) which lists matching subscriptions and links into `SubscriptionDetailView` via `NavigationLink`.
+- Minor gap: no `Haptics.selection()` on tap. Plan mentioned haptic feedback — not blocking, trivially addable later.
+
+**BUG #3 — Subscription "In -16 days" display** ⚠️ Partial
+
+- Fixed at `Views/Subscriptions/SubscriptionsOverviewView.swift:366` — `days < 0 ? "\(abs(days))d overdue" : days == 0 ? "Today" : days == 1 ? "Tomorrow" : "In \(days) days"`.
+- Fixed at `Views/Subscriptions/SubscriptionsDashboardCard.swift:91-94` — same ternary shape.
+- 🔴 **Not fixed** at `Views/Subscriptions/SubscriptionDetailView.swift:294-299`:
+  ```swift
+  if let days = liveSub.daysUntilRenewal {
+      return days == 0 ? "Today" : "\(days) days"
+  }
+  ```
+  For an overdue subscription this renders e.g. `"-5 days"`. Same ternary pattern used in Overview/Dashboard should be applied here.
+- `Manager/UpcomingPaymentsBanner.swift:159,170` clamps with `max(0, ...)` so the banner never shows negative — it just stops advancing on overdue. Different UX, but not a bug per se (never produces a wrong string).
+
+**BUG #4 — Goal save silent failure** ✅
+
+- `SupaBase/GoalManager.swift:54-89` — `createGoal()` and `updateGoal()` both return `Bool` and set `@Published var errorMessage` on failure via `AppConfig.shared.safeErrorMessage(...)`.
+- `Views/Goals/CreateEditGoalView.swift:35` — local `@State errorMessage`. `save()` at line 433-493 sets local `errorMessage = goalManager.errorMessage ?? "Failed to ..."` and renders an inline banner at the top of the scroll (lines 63-75).
+- Validation guards (`target > 0`, `current >= 0`, `current <= target`) also surface via the same banner.
+- Minor: `GoalManager` never clears its own `errorMessage` on success, so a subsequent success leaves the stale string in the manager. View-level `errorMessage = nil` at the top of `save()` masks this, so UX is fine. Worth clearing in the manager too for hygiene — optional cleanup.
+- `updateGoal` does not `SecureLogger.error` on failure (only `createGoal` does). Minor asymmetry; add for parity if touching this file again.
+
+**BUG #5 — Orphaned SplitExpense on tx delete** ⚠️ Partial
+
+Fixed paths (via `Models/TransactionService.swift`):
+- `performDelete` line 112: `HouseholdManager.shared.removeSplitExpenses(forTransaction: transaction.id)`
+- `applyBulkDeletionToStore` line 452: `HouseholdManager.shared.removeSplitExpenses(forTransactions: ids)` (used by `performDeleteBulk` and `performClearMonth`)
+
+Unfixed paths (direct `store.transactions.removeAll { ... }` without calling `HouseholdManager`):
+- 🔴 `Manager/ReviewEngine.swift:252` — `markDuplicate(item:store:)` removes all-but-first duplicate transactions. Any split expense tied to a removed duplicate becomes an orphan.
+- 🔴 `Views/Import/ImportTransactionsScreen.swift:483` — CSV import in `.replace` mode wipes all transactions but leaves `HouseholdManager.splitExpenses` untouched.
+- 🔴 `Views/Components/BackupManager.swift:160` — backup restore in `.replace` mode, same issue.
+
+No launch-time orphan sweep exists (grepped `Household/`; nothing matches `orphan|sweep`). The plan called for a one-shot cleanup on app launch as a defense against prior-bug residue — not implemented.
+
+Minimal fix shape:
+1. Route the three bypass sites through `HouseholdManager.removeSplitExpenses(forTransactions:)` before (or after) wiping transactions.
+2. Optional: add a one-shot sweep at `HouseholdManager.load(userId:)` that drops any `splitExpense.transactionId` not found in the current `store.transactions`.
+
+**BUG #6 — AddTransaction missing Account/Goal linking** ✅
+
+- `Models/Transaction.swift:119-121` — `accountId: UUID?`, `linkedGoalId: UUID?`, `lastModified: Date` already on the struct, with `decodeIfPresent` for backwards-compatible loads.
+- `Views/Transactions/Forms/AddTransactionSheet.swift:26-29, 80-193` — full Account picker (Menu) + Goal picker (Menu, gated to `transactionType == .income`). `saveTransaction()` passes `accountId: selectedAccountId, linkedGoalId: selectedGoalId` (lines 423-424).
+- `Views/Transactions/Forms/EditTransactionSheet.swift:17-18, 252-253, 329-330` — pickers wired, `loadExisting()` populates from the edit target, save path uses both.
+- `Models/TransactionService.fireSideEffectsForAdd / fireSideEffectsForEdit` handles balance + goal side-effects. ✅
+
+### Bonus finding — EditTransactionSheet unflags on edit 🔴
+
+`Views/Transactions/Forms/EditTransactionSheet.swift:319-332` builds the new `Transaction` without passing `isFlagged`, so the init defaults it to `false`:
+
+```swift
+let newTransaction = Transaction(
+    id: oldTransaction.id,
+    amount: amount,
+    date: date,
+    category: category,
+    note: note,
+    paymentMethod: paymentMethod,
+    type: transactionType,
+    attachmentData: oldTransaction.attachmentData,
+    attachmentType: oldTransaction.attachmentType,
+    accountId: selectedAccountId,
+    linkedGoalId: selectedGoalId,
+    lastModified: Date()
+)
+```
+
+Any edit to a flagged transaction silently un-flags it. One-line fix: add `isFlagged: oldTransaction.isFlagged` to the init.
+
+### Recommended commit pack
+
+Small, reviewable, each one isolated:
+
+1. **P3.1** — `SubscriptionDetailView`: apply the same overdue ternary as Overview/Dashboard.
+2. **P4.1** — `EditTransactionSheet`: preserve `isFlagged` on edit (bonus bug fix).
+3. **P6.1** — Route `ReviewEngine.markDuplicate`, `ImportTransactionsScreen (.replace)`, and `BackupManager (.replace)` through `HouseholdManager.removeSplitExpenses(forTransactions:)`.
+4. **P6.2** — One-shot orphan sweep in `HouseholdManager.load(userId:)` to drop split expenses whose `transactionId` is not in `store.transactions`.
+5. **P5.x (optional)** — Clear `GoalManager.errorMessage` on success; mirror `SecureLogger.error` in `updateGoal`; tap haptic on subscription insight banners.
+
+---
+
 ## Architecture Summary
 
 ```
