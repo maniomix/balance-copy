@@ -752,8 +752,21 @@ struct ChangePasswordView: View {
             do {
                 try await authManager.changePassword(newPassword: newPassword)
                 await MainActor.run { isLoading = false; showSuccess = true }
+            } catch let authError as AuthError {
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = authError.errorDescription ?? "Could not change password."
+                    showError = true
+                }
             } catch {
-                await MainActor.run { isLoading = false; errorMessage = error.localizedDescription; showError = true }
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = AppConfig.shared.safeErrorMessage(
+                        detail: error.localizedDescription,
+                        fallback: "Could not change password. Please try again."
+                    )
+                    showError = true
+                }
             }
         }
     }

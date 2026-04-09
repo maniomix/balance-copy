@@ -304,10 +304,19 @@ struct UltimateSignUpView: View {
                     isLoading = false
                     SecureLogger.info("Sign up completed")
                 }
+            } catch let authError as AuthError {
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = authError.errorDescription ?? "Sign up failed. Please try again."
+                    SecureLogger.error("Sign up failed", authError)
+                }
             } catch {
                 await MainActor.run {
                     isLoading = false
-                    errorMessage = "Sign up failed: \(error.localizedDescription)"
+                    errorMessage = AppConfig.shared.safeErrorMessage(
+                        detail: error.localizedDescription,
+                        fallback: "Sign up failed. Please try again."
+                    )
                     SecureLogger.error("Sign up failed", error)
                 }
             }

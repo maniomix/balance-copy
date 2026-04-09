@@ -488,7 +488,11 @@ struct BackupRestorePicker: UIViewControllerRepresentable {
                     completion(false, "\u{274C} \(error.localizedDescription)")
                 }
             } catch {
-                completion(false, "\u{274C} Error: \(error.localizedDescription)")
+                let safe = AppConfig.shared.safeErrorMessage(
+                    detail: error.localizedDescription,
+                    fallback: "Could not read backup file. Please try again."
+                )
+                completion(false, "\u{274C} \(safe)")
             }
 
             dismiss()

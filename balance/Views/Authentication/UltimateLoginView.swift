@@ -242,10 +242,18 @@ struct UltimateLoginView: View {
                 await MainActor.run {
                     isLoading = false
                 }
+            } catch let authError as AuthError {
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = authError.errorDescription ?? "Sign in failed. Please try again."
+                }
             } catch {
                 await MainActor.run {
                     isLoading = false
-                    errorMessage = error.localizedDescription
+                    errorMessage = AppConfig.shared.safeErrorMessage(
+                        detail: error.localizedDescription,
+                        fallback: "Sign in failed. Please check your credentials and try again."
+                    )
                 }
             }
         }
@@ -376,10 +384,18 @@ struct ForgotPasswordSheet: View {
                     showSuccess = true
                     dismiss()
                 }
+            } catch let authError as AuthError {
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = authError.errorDescription ?? "Could not send reset email."
+                }
             } catch {
                 await MainActor.run {
                     isLoading = false
-                    errorMessage = error.localizedDescription
+                    errorMessage = AppConfig.shared.safeErrorMessage(
+                        detail: error.localizedDescription,
+                        fallback: "Could not send reset email. Please try again."
+                    )
                 }
             }
         }
