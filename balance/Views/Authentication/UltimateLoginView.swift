@@ -138,6 +138,7 @@ struct UltimateLoginView: View {
                             .font(.system(size: 16))
                             .foregroundStyle(DS.Colors.subtext)
                     }
+                    .accessibilityLabel(showPassword ? "Hide password" : "Show password")
                 }
                 .padding(14)
                 .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))

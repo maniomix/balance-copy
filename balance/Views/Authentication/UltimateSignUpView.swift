@@ -118,6 +118,7 @@ struct UltimateSignUpView: View {
                             .font(.system(size: 16))
                             .foregroundStyle(DS.Colors.subtext)
                     }
+                    .accessibilityLabel(showPassword ? "Hide password" : "Show password")
                 }
                 .padding(14)
                 .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -152,6 +153,7 @@ struct UltimateSignUpView: View {
                             .font(.system(size: 16))
                             .foregroundStyle(DS.Colors.subtext)
                     }
+                    .accessibilityLabel(showConfirmPassword ? "Hide confirm password" : "Show confirm password")
                 }
                 .padding(14)
                 .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))

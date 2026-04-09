@@ -127,6 +127,7 @@ struct GoalsOverviewView: View {
                         .font(.title3)
                         .foregroundStyle(DS.Colors.accent)
                 }
+                .accessibilityLabel("Create goal")
             }
         }
         .sheet(isPresented: $showCreateGoal) {

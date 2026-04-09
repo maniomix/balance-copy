@@ -73,6 +73,7 @@ struct HouseholdOverviewView: View {
                             .font(.system(size: 16, weight: .medium))
                             .foregroundStyle(DS.Colors.accent)
                     }
+                    .accessibilityLabel("Household actions")
                 }
             }
         }
@@ -775,6 +776,7 @@ struct HouseholdSettingsSheet: View {
                                 Image(systemName: "doc.on.doc.fill")
                                     .foregroundStyle(DS.Colors.accent)
                             }
+                            .accessibilityLabel("Copy invite code")
                         }
                         Text("Share this code with your partner to join.")
                             .font(DS.Typography.caption)

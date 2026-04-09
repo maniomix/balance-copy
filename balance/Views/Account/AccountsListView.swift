@@ -49,6 +49,7 @@ struct AccountsListView: View {
                         .font(.title3)
                         .foregroundStyle(DS.Colors.accent)
                 }
+                .accessibilityLabel("Add account")
             }
         }
         .sheet(isPresented: $showAddAccount) {

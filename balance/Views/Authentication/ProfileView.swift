@@ -123,6 +123,7 @@ struct ProfileView: View {
                             .font(.system(size: 16))
                             .foregroundStyle(DS.Colors.subtext)
                     }
+                    .accessibilityLabel("Edit display name")
                 }
                 
                 Text(userEmail)
