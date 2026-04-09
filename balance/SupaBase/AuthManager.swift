@@ -86,10 +86,18 @@ class AuthManager: ObservableObject {
             }
 
             // 2. Listen for future auth state changes
+            //
+            // With `emitLocalSessionAsInitialSession: true` the SDK now
+            // emits the locally-stored session on launch even if its
+            // access token has expired — so we must guard on
+            // `!session.isExpired` rather than just `session != nil`,
+            // otherwise stale tokens would flip the user to "signed in"
+            // until the first refresh actually succeeds.
             for await state in await supabase.client.auth.authStateChanges {
                 await MainActor.run {
-                    self.currentUser = state.session?.user
-                    self.isAuthenticated = state.session != nil
+                    let validSession = state.session.flatMap { $0.isExpired ? nil : $0 }
+                    self.currentUser = validSession?.user
+                    self.isAuthenticated = validSession != nil
                     SecureLogger.debug("Auth state changed: \(self.isAuthenticated)")
                 }
             }

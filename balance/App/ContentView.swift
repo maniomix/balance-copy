@@ -285,12 +285,25 @@ struct ContentView: View {
             //   as a secondary save — harmless (idempotent UserDefaults overwrite).
             // - Non-transaction mutations (budget edits, selectedMonth, categories):
             //   This onChange is the ONLY save. Do NOT remove it.
-            .onChange(of: store) { _, newStore in
+            .onChange(of: store) { oldStore, newStore in
                 // Save locally IMMEDIATELY (not debounced) so budget/data never gets lost
                 if let userId = authManager.currentUser?.uid {
                     if !newStore.save(userId: userId) {
                         showSaveFailedAlert = true
                     }
+                }
+
+                // Skip the cloud push entirely when the only thing that
+                // changed is `selectedMonth`. `selectedMonth` is UI
+                // navigation state — it's persisted locally so the app
+                // remembers the last viewed month, but pushing it would
+                // (a) waste a full saveStore round-trip on every swipe
+                // and (b) race against any periodic sync, turning a
+                // harmless month-change into a "Sync failed" toast.
+                var oldNormalized = oldStore
+                oldNormalized.selectedMonth = newStore.selectedMonth
+                if oldNormalized == newStore {
+                    return
                 }
 
                 // Cloud sync is debounced to avoid spamming the server

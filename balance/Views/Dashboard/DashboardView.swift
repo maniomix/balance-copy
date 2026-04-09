@@ -9,6 +9,7 @@ struct DashboardView: View {
     var goToTransactions: (() -> Void)? = nil
     @State private var showAdd = false
     @State private var trendSelectedDay: Int? = nil
+    @State private var showBarChart: Bool = false
     @StateObject private var subscriptionManager = SubscriptionManager.shared
 
     @EnvironmentObject private var authManager: AuthManager
@@ -631,16 +632,78 @@ struct DashboardView: View {
 
         return DS.Card {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Daily Trend")
-                    .font(DS.Typography.section)
-                    .foregroundStyle(DS.Colors.text)
+                HStack {
+                    Text("Daily Trend")
+                        .font(DS.Typography.section)
+                        .foregroundStyle(DS.Colors.text)
+                    Spacer()
+                    // Toggle between line and bar chart
+                    Button {
+                        withAnimation(DS.Animations.quick) { showBarChart.toggle() }
+                    } label: {
+                        Image(systemName: showBarChart ? "chart.xyaxis.line" : "chart.bar.fill")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(DS.Colors.subtext)
+                            .frame(width: 32, height: 32)
+                            .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(showBarChart ? "Switch to line chart" : "Switch to bar chart")
+                }
 
                 if points.isEmpty {
                     Text("Not enough data")
                         .font(DS.Typography.body)
                         .foregroundStyle(DS.Colors.subtext)
                         .padding(.vertical, 6)
+                } else if showBarChart {
+                    // ── Bar chart mode ──
+                    Chart(points) { p in
+                        BarMark(
+                            x: .value("Day", p.day),
+                            y: .value("Amount", p.amount)
+                        )
+                        .cornerRadius(3)
+                        .foregroundStyle(
+                            daysWithTransactions.contains(p.day)
+                                ? DS.Colors.accent
+                                : DS.Colors.accent.opacity(0.25)
+                        )
+                    }
+                    .chartXAxis {
+                        AxisMarks(values: .stride(by: 5)) { _ in
+                            AxisGridLine()
+                                .foregroundStyle(DS.Colors.grid.opacity(0.5))
+                            AxisValueLabel()
+                                .foregroundStyle(DS.Colors.subtext)
+                                .font(DS.Typography.caption)
+                        }
+                    }
+                    .chartYAxis {
+                        AxisMarks(values: .automatic(desiredCount: 4)) { value in
+                            AxisGridLine()
+                                .foregroundStyle(DS.Colors.grid.opacity(0.5))
+                            AxisTick()
+                                .foregroundStyle(DS.Colors.grid)
+                            AxisValueLabel {
+                                if let vInt = value.as(Int.self) {
+                                    Text(DS.Format.money(vInt))
+                                        .foregroundStyle(DS.Colors.subtext)
+                                        .font(DS.Typography.caption)
+                                } else if let v = value.as(Double.self) {
+                                    Text(DS.Format.money(Int(v.rounded())))
+                                        .foregroundStyle(DS.Colors.subtext)
+                                        .font(DS.Typography.caption)
+                                }
+                            }
+                        }
+                    }
+                    .chartOverlay { proxy in
+                        trendChartOverlay(proxy: proxy)
+                    }
+                    .frame(height: 200)
                 } else {
+                    // ── Line / area chart mode (original) ──
                     Chart {
                         // Area fill
                         ForEach(points) { p in

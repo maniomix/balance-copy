@@ -80,14 +80,21 @@ enum DS {
     }
 
     // MARK: - Typography (Better Hierarchy)
+    //
+    // Text-style-based so they respect Dynamic Type. Default point sizes line
+    // up with the old fixed values: largeTitle=28, title=20, section=17,
+    // body=15, caption=13, number=17. `callout` drifts 14→15 (closest text
+    // style is .subheadline at 15pt — 1pt drift is accepted in exchange for
+    // Dynamic Type support). `heroAmount` intentionally stays fixed because
+    // the dashboard hero card layout is not safe at accessibility sizes.
     enum Typography {
-        static let largeTitle = Font.system(size: 28, weight: .bold, design: .rounded)
-        static let title = Font.system(size: 20, weight: .semibold, design: .rounded)
-        static let section = Font.system(size: 17, weight: .semibold, design: .rounded)
-        static let body = Font.system(size: 15, weight: .regular, design: .rounded)
-        static let callout = Font.system(size: 14, weight: .medium, design: .rounded)
-        static let caption = Font.system(size: 13, weight: .regular, design: .rounded)
-        static let number = Font.system(size: 17, weight: .semibold, design: .monospaced).monospacedDigit()
+        static let largeTitle = Font.system(.title, design: .rounded).weight(.bold)
+        static let title = Font.system(.title3, design: .rounded).weight(.semibold)
+        static let section = Font.system(.headline, design: .rounded)
+        static let body = Font.system(.subheadline, design: .rounded)
+        static let callout = Font.system(.subheadline, design: .rounded).weight(.medium)
+        static let caption = Font.system(.footnote, design: .rounded)
+        static let number = Font.system(.body, design: .monospaced).weight(.semibold).monospacedDigit()
         static let heroAmount = Font.system(size: 42, weight: .bold, design: .rounded).monospacedDigit()
     }
 

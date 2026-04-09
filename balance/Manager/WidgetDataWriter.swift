@@ -16,6 +16,21 @@ import WidgetKit
 @MainActor
 enum WidgetDataWriter {
 
+    private static func categoryHex(_ cat: Category) -> String {
+        switch cat {
+        case .groceries:  return "2ECC71"
+        case .rent:       return "3498DB"
+        case .bills:      return "F39C12"
+        case .transport:  return "9B59B6"
+        case .health:     return "E74C3C"
+        case .education:  return "1ABC9C"
+        case .dining:     return "E91E63"
+        case .shopping:   return "FF5722"
+        case .other:      return "607D8B"
+        case .custom:     return "95A5A6"
+        }
+    }
+
     static func update(store: Store) {
         let cal = Calendar.current
         let now = Date()
@@ -114,6 +129,29 @@ enum WidgetDataWriter {
         }
         let incomeThisMonth: Int = incomeTxns.reduce(0) { $0 + $1.amount }
 
+        // ── Weekly Spending (last 7 days) ────────────
+        var weeklySpending: [Int] = []
+        for dayOffset in (0...6).reversed() {
+            let targetDay = cal.date(byAdding: .day, value: -dayOffset, to: cal.startOfDay(for: now))!
+            let dayTotal = store.transactions.filter { txn in
+                cal.isDate(txn.date, inSameDayAs: targetDay) && txn.type == .expense
+            }.reduce(0) { $0 + $1.amount }
+            weeklySpending.append(dayTotal)
+        }
+
+        // ── Top Categories ───────────────────────────
+        var categoryTotals: [String: (icon: String, amount: Int, colorHex: String)] = [:]
+        for txn in monthTxns {
+            let key = txn.category.title
+            let hex = Self.categoryHex(txn.category)
+            let existing = categoryTotals[key] ?? (icon: txn.category.icon, amount: 0, colorHex: hex)
+            categoryTotals[key] = (icon: existing.icon, amount: existing.amount + txn.amount, colorHex: existing.colorHex)
+        }
+        let topCategories: [WidgetCategory] = categoryTotals
+            .sorted { $0.value.amount > $1.value.amount }
+            .prefix(5)
+            .map { WidgetCategory(name: $0.key, icon: $0.value.icon, amount: $0.value.amount, colorHex: $0.value.colorHex) }
+
         // ── Currency Symbol ───────────────────────────
         let currencyCode: String = UserDefaults.standard.string(forKey: "app.currency") ?? "EUR"
         let currencySymbol: String
@@ -147,6 +185,8 @@ enum WidgetDataWriter {
             totalLiabilities: totalLiabilities,
             riskLevel: riskLevel,
             incomeThisMonth: incomeThisMonth,
+            weeklySpending: weeklySpending,
+            topCategories: topCategories,
             currencySymbol: currencySymbol,
             lastUpdated: now
         )

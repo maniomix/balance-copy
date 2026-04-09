@@ -46,6 +46,11 @@ struct WidgetSharedData: Codable {
     // Income
     let incomeThisMonth: Int        // cents
 
+    // Weekly spending (last 7 days, index 0 = 6 days ago, index 6 = today)
+    let weeklySpending: [Int]?          // cents per day
+    // Top spending categories this month
+    let topCategories: [WidgetCategory]?
+
     // Meta
     let currencySymbol: String
     let lastUpdated: Date
@@ -79,6 +84,7 @@ struct WidgetSharedData: Codable {
         upcomingBills: [],
         netWorth: 0, accountCount: 0, totalAssets: 0, totalLiabilities: 0,
         riskLevel: "safe", incomeThisMonth: 0,
+        weeklySpending: nil, topCategories: nil,
         currencySymbol: "€", lastUpdated: Date.distantPast
     )
 
@@ -103,8 +109,24 @@ struct WidgetSharedData: Codable {
         ],
         netWorth: 3245000, accountCount: 3, totalAssets: 4150000, totalLiabilities: 905000,
         riskLevel: "safe", incomeThisMonth: 420000,
+        weeklySpending: [7200, 4500, 12300, 6800, 9400, 5100, 3490],
+        topCategories: [
+            WidgetCategory(name: "Dining", icon: "fork.knife", amount: 42500, colorHex: "E91E63"),
+            WidgetCategory(name: "Groceries", icon: "basket", amount: 38200, colorHex: "2ECC71"),
+            WidgetCategory(name: "Transport", icon: "car", amount: 28900, colorHex: "9B59B6"),
+            WidgetCategory(name: "Shopping", icon: "bag", amount: 21400, colorHex: "FF5722"),
+            WidgetCategory(name: "Health", icon: "cross.case", amount: 17750, colorHex: "E74C3C"),
+        ],
         currencySymbol: "€", lastUpdated: Date()
     )
+}
+
+struct WidgetCategory: Codable, Identifiable {
+    var id: String { name }
+    let name: String
+    let icon: String          // SF Symbol name
+    let amount: Int           // cents
+    let colorHex: String      // hex color e.g. "2ECC71"
 }
 
 struct WidgetBill: Codable, Identifiable {

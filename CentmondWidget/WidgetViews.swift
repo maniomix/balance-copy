@@ -2,826 +2,963 @@
 //  WidgetViews.swift
 //  CentmondWidget
 //
-//  Created by Mani on 16.03.26.
+//  Premium widgets with custom charts, bold typography, and rich visuals
 //
 
 import WidgetKit
 import SwiftUI
 
 // ============================================================
-// MARK: - Shared Helpers
+// MARK: - Widget Design System (mirrors app's DS.Colors)
+// ============================================================
+//
+// Widgets live in their own target and can't pull `DS` from the
+// app, so we mirror the brand palette here. Values match
+// balance/DesignSystem/DS.swift so the widgets feel like they
+// belong to the same app instead of shipping stock SwiftUI colors.
+private enum WDS {
+    private static func adaptive(light: UIColor, dark: UIColor) -> Color {
+        Color(UIColor { $0.userInterfaceStyle == .dark ? dark : light })
+    }
+
+    static let accent = Color(red: 0.27, green: 0.35, blue: 0.96)  // #4559F5
+    static let positive = adaptive(
+        light: UIColor(red: 0.18, green: 0.75, blue: 0.50, alpha: 1),
+        dark:  UIColor(red: 0.40, green: 0.85, blue: 0.65, alpha: 1)
+    )
+    static let warning = adaptive(
+        light: UIColor(red: 0.95, green: 0.65, blue: 0.15, alpha: 1),
+        dark:  UIColor(red: 1.00, green: 0.78, blue: 0.40, alpha: 1)
+    )
+    static let danger = adaptive(
+        light: UIColor(red: 0.92, green: 0.28, blue: 0.30, alpha: 1),
+        dark:  UIColor(red: 0.98, green: 0.45, blue: 0.47, alpha: 1)
+    )
+    static let bg = adaptive(
+        light: UIColor(red: 0.97, green: 0.97, blue: 0.98, alpha: 1),
+        dark:  UIColor(red: 0.11, green: 0.11, blue: 0.14, alpha: 1)
+    )
+}
+
+// ============================================================
+// MARK: - Helpers
 // ============================================================
 
-private let brandGradient = LinearGradient(
-    colors: [Color(red: 0.4, green: 0.49, blue: 0.92),
-             Color(red: 0.46, green: 0.29, blue: 0.64)],
-    startPoint: .topLeading, endPoint: .bottomTrailing
-)
-
-private let brandColor = Color(red: 0.4, green: 0.49, blue: 0.92)
-
-private func formatCents(_ cents: Int, symbol: String) -> String {
-    let value = Double(cents) / 100.0
-    if abs(value) >= 1000 {
-        let k = value / 1000.0
-        return String(format: "%@%.1fk", symbol, k)
-    }
-    return String(format: "%@%.0f", symbol, value)
+private func money(_ cents: Int, _ sym: String) -> String {
+    let v = Double(cents) / 100.0
+    if abs(v) >= 1000 { return String(format: "%@%.1fk", sym, v / 1000.0) }
+    return String(format: "%@%.0f", sym, v)
 }
 
-private func formatCentsFull(_ cents: Int, symbol: String) -> String {
-    let value = Double(cents) / 100.0
-    if value == value.rounded() {
-        return String(format: "%@%.0f", symbol, value)
-    }
-    return String(format: "%@%.2f", symbol, value)
+private func moneyFull(_ cents: Int, _ sym: String) -> String {
+    let v = Double(cents) / 100.0
+    return v == v.rounded() ? String(format: "%@%.0f", sym, v) : String(format: "%@%.2f", sym, v)
 }
 
-/// Compact format for lock-screen accessories
-private func formatCentsCompact(_ cents: Int, symbol: String) -> String {
-    let value = Double(cents) / 100.0
-    if abs(value) >= 10000 {
-        return String(format: "%@%.0fk", symbol, value / 1000.0)
-    } else if abs(value) >= 1000 {
-        return String(format: "%@%.1fk", symbol, value / 1000.0)
-    }
-    return String(format: "%@%.0f", symbol, value)
+private func moneyCompact(_ cents: Int, _ sym: String) -> String {
+    let v = Double(cents) / 100.0
+    if abs(v) >= 10000 { return String(format: "%@%.0fk", sym, v / 1000.0) }
+    if abs(v) >= 1000  { return String(format: "%@%.1fk", sym, v / 1000.0) }
+    return String(format: "%@%.0f", sym, v)
 }
 
-private func riskColor(for level: String) -> Color {
+private func budgetColor(_ ratio: Double) -> Color {
+    ratio > 0.9 ? WDS.danger : (ratio > 0.7 ? WDS.warning : WDS.positive)
+}
+
+private func riskColor(_ level: String) -> Color {
     switch level {
-    case "highRisk": return .red
-    case "caution": return .orange
-    default: return .green
+    case "highRisk": return WDS.danger
+    case "caution":  return WDS.warning
+    default:         return WDS.positive
     }
 }
 
-private func statusColor(ratio: Double) -> Color {
-    ratio > 0.9 ? .red : (ratio > 0.7 ? .orange : .green)
+private func colorFromHex(_ hex: String) -> Color {
+    let scanner = Scanner(string: hex)
+    var rgb: UInt64 = 0
+    scanner.scanHexInt64(&rgb)
+    return Color(
+        red: Double((rgb >> 16) & 0xFF) / 255.0,
+        green: Double((rgb >> 8) & 0xFF) / 255.0,
+        blue: Double(rgb & 0xFF) / 255.0
+    )
+}
+
+private let weekdayLabels: [String] = {
+    let cal = Calendar.current
+    let today = cal.startOfDay(for: Date())
+    return (0..<7).reversed().map { offset in
+        let day = cal.date(byAdding: .day, value: -offset, to: today)!
+        let sym = cal.shortWeekdaySymbols[cal.component(.weekday, from: day) - 1]
+        return String(sym.prefix(2))
+    }
+}()
+
+private let monthName: String = {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "MMMM"
+    return formatter.string(from: Date())
+}()
+
+// ============================================================
+// MARK: - Deep Links
+// ============================================================
+
+private enum DL {
+    static let dash = URL(string: "centmond://dashboard")!
+    static let budget = URL(string: "centmond://budget")!
+    static let bills = URL(string: "centmond://subscriptions")!
+    static let safe = URL(string: "centmond://forecast")!
+    static let net = URL(string: "centmond://accounts")!
+    static let add = URL(string: "centmond://add")!
 }
 
 // ============================================================
-// MARK: - Deep Link URLs
+// MARK: - Custom Chart Shapes
 // ============================================================
 
-enum WidgetDeepLink {
-    static let dashboard    = URL(string: "centmond://dashboard")!
-    static let budget       = URL(string: "centmond://budget")!
-    static let bills        = URL(string: "centmond://subscriptions")!
-    static let safeToSpend  = URL(string: "centmond://forecast")!
-    static let netWorth     = URL(string: "centmond://accounts")!
-}
+/// Mini bar chart — 7 vertical bars with optional highlighted bar and dashed average line
+private struct MiniBarChart: View {
+    let values: [Int]
+    let highlightIndex: Int      // typically 6 (today)
+    let accentColor: Color
+    let showLabels: Bool
+    let showAvgLine: Bool
 
-// ============================================================
-// MARK: - Empty / Stale State Views
-// ============================================================
-
-/// Shown when the app has never written widget data
-private struct WidgetEmptyView: View {
-    let icon: String
-    let title: String
+    init(values: [Int], highlightIndex: Int = 6, accentColor: Color = WDS.accent,
+         showLabels: Bool = false, showAvgLine: Bool = true) {
+        self.values = values
+        self.highlightIndex = highlightIndex
+        self.accentColor = accentColor
+        self.showLabels = showLabels
+        self.showAvgLine = showAvgLine
+    }
 
     var body: some View {
-        VStack(spacing: 6) {
+        let maxVal = Double(values.max() ?? 1)
+        let avg = values.isEmpty ? 0.0 : Double(values.reduce(0, +)) / Double(values.count)
+
+        GeometryReader { geo in
+            let barWidth = (geo.size.width - CGFloat(values.count - 1) * 3) / CGFloat(values.count)
+            let chartH = geo.size.height - (showLabels ? 14 : 0)
+
+            ZStack(alignment: .bottom) {
+                // Bars
+                HStack(alignment: .bottom, spacing: 3) {
+                    ForEach(Array(values.enumerated()), id: \.offset) { i, val in
+                        VStack(spacing: 2) {
+                            RoundedRectangle(cornerRadius: barWidth / 2.5)
+                                .fill(i == highlightIndex ? accentColor : accentColor.opacity(0.25))
+                                .frame(width: barWidth, height: max(2, chartH * CGFloat(Double(val) / max(maxVal, 1))))
+
+                            if showLabels {
+                                Text(i < weekdayLabels.count ? weekdayLabels[i] : "")
+                                    .font(.system(size: 8, weight: i == highlightIndex ? .bold : .regular))
+                                    .foregroundStyle(i == highlightIndex ? .primary : .secondary)
+                                    .frame(height: 12)
+                            }
+                        }
+                    }
+                }
+
+                // Average dashed line
+                if showAvgLine && maxVal > 0 {
+                    let lineY = chartH * (1 - CGFloat(avg / maxVal))
+                    Path { p in
+                        p.move(to: CGPoint(x: 0, y: lineY))
+                        p.addLine(to: CGPoint(x: geo.size.width, y: lineY))
+                    }
+                    .stroke(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .foregroundStyle(.secondary.opacity(0.5))
+                }
+            }
+        }
+    }
+}
+
+/// Smooth area chart with gradient fill
+private struct MiniAreaChart: Shape {
+    let values: [Double]
+
+    func path(in rect: CGRect) -> Path {
+        guard values.count > 1 else { return Path() }
+        let maxV = values.max() ?? 1
+        let minV = values.min() ?? 0
+        let range = max(maxV - minV, 1)
+
+        var path = Path()
+        let stepX = rect.width / CGFloat(values.count - 1)
+
+        func point(_ i: Int) -> CGPoint {
+            let y = rect.height - (CGFloat((values[i] - minV) / range) * rect.height * 0.85 + rect.height * 0.05)
+            return CGPoint(x: CGFloat(i) * stepX, y: y)
+        }
+
+        path.move(to: CGPoint(x: 0, y: rect.height))
+        path.addLine(to: point(0))
+
+        for i in 1..<values.count {
+            let prev = point(i - 1)
+            let curr = point(i)
+            let midX = (prev.x + curr.x) / 2
+            path.addCurve(to: curr,
+                          control1: CGPoint(x: midX, y: prev.y),
+                          control2: CGPoint(x: midX, y: curr.y))
+        }
+
+        path.addLine(to: CGPoint(x: rect.width, y: rect.height))
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// Area chart line (no fill, just the top stroke)
+private struct MiniAreaLine: Shape {
+    let values: [Double]
+
+    func path(in rect: CGRect) -> Path {
+        guard values.count > 1 else { return Path() }
+        let maxV = values.max() ?? 1
+        let minV = values.min() ?? 0
+        let range = max(maxV - minV, 1)
+
+        var path = Path()
+        let stepX = rect.width / CGFloat(values.count - 1)
+
+        func point(_ i: Int) -> CGPoint {
+            let y = rect.height - (CGFloat((values[i] - minV) / range) * rect.height * 0.85 + rect.height * 0.05)
+            return CGPoint(x: CGFloat(i) * stepX, y: y)
+        }
+
+        path.move(to: point(0))
+        for i in 1..<values.count {
+            let prev = point(i - 1)
+            let curr = point(i)
+            let midX = (prev.x + curr.x) / 2
+            path.addCurve(to: curr,
+                          control1: CGPoint(x: midX, y: prev.y),
+                          control2: CGPoint(x: midX, y: curr.y))
+        }
+        return path
+    }
+}
+
+/// Custom thick circular progress ring
+private struct ProgressRing: View {
+    let progress: Double
+    let color: Color
+    let lineWidth: CGFloat
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(color.opacity(0.12), lineWidth: lineWidth)
+            Circle()
+                .trim(from: 0, to: min(1, progress))
+                .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+// ============================================================
+// MARK: - Shared Components
+// ============================================================
+
+private struct WidgetEmpty: View {
+    let icon: String; let title: String
+    var body: some View {
+        VStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.title3)
+                .font(.system(size: 28, weight: .light))
                 .foregroundStyle(.tertiary)
             Text(title)
-                .font(.caption2.bold())
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Text("Open Centmond to get started")
-                .font(.system(size: 9))
+            Text("Open Balance to start")
+                .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-/// Stale data banner overlay
-private struct StaleBanner: View {
+/// Category pill: icon + amount in a rounded capsule
+private struct CategoryPill: View {
+    let category: WidgetCategory
+    let currencySymbol: String
+
     var body: some View {
-        VStack {
-            Spacer()
-            HStack(spacing: 3) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 7))
-                Text("Open app to refresh")
-                    .font(.system(size: 8))
+        let catColor = colorFromHex(category.colorHex)
+        HStack(spacing: 4) {
+            Image(systemName: category.icon)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(catColor)
+            Text(moneyCompact(category.amount, currencySymbol))
+                .font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(.primary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(catColor.opacity(0.1), in: Capsule())
+    }
+}
+
+/// Add Expense button — large dark circle with white "+"
+private struct AddButton: View {
+    let size: CGFloat
+
+    var body: some View {
+        Link(destination: DL.add) {
+            ZStack {
+                Circle()
+                    .fill(.primary)
+                    .frame(width: size, height: size)
+                Image(systemName: "plus")
+                    .font(.system(size: size * 0.4, weight: .semibold))
+                    .foregroundStyle(Color(UIColor.systemBackground))
             }
-            .foregroundStyle(.orange)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(.ultraThinMaterial, in: Capsule())
         }
     }
 }
 
 // ============================================================
-// MARK: - Timeline Provider (Shared)
+// MARK: - Timeline
 // ============================================================
 
 struct BalanceTimelineProvider: TimelineProvider {
     typealias Entry = BalanceTimelineEntry
-
-    func placeholder(in context: Context) -> BalanceTimelineEntry {
-        BalanceTimelineEntry(date: Date(), data: .sample)
+    func placeholder(in context: Context) -> Entry { .init(date: .now, data: .sample) }
+    func getSnapshot(in context: Context, completion: @escaping (Entry) -> Void) {
+        completion(.init(date: .now, data: context.isPreview ? .sample : WidgetDataBridge.read()))
     }
-
-    func getSnapshot(in context: Context, completion: @escaping (BalanceTimelineEntry) -> Void) {
-        if context.isPreview {
-            // Widget gallery preview — show sample data
-            completion(BalanceTimelineEntry(date: Date(), data: .sample))
-        } else {
-            let data = WidgetDataBridge.read()
-            completion(BalanceTimelineEntry(date: Date(), data: data))
-        }
-    }
-
-    func getTimeline(in context: Context, completion: @escaping (Timeline<BalanceTimelineEntry>) -> Void) {
-        let data = WidgetDataBridge.read()
-        let entry = BalanceTimelineEntry(date: Date(), data: data)
-
-        // Refresh every 30 minutes
-        let nextUpdate = Calendar.current.date(byAdding: .minute, value: 30, to: Date())!
-        let timeline = Timeline(entries: [entry], policy: .after(nextUpdate))
-        completion(timeline)
+    func getTimeline(in context: Context, completion: @escaping (Timeline<Entry>) -> Void) {
+        let e = Entry(date: .now, data: WidgetDataBridge.read())
+        completion(Timeline(entries: [e], policy: .after(Calendar.current.date(byAdding: .minute, value: 30, to: .now)!)))
     }
 }
 
 struct BalanceTimelineEntry: TimelineEntry {
-    let date: Date
-    let data: WidgetSharedData
-
-    /// Relevance score for Smart Stack ordering.
-    /// Higher = more relevant right now.
+    let date: Date; let data: WidgetSharedData
     var relevance: TimelineEntryRelevance? {
-        let ratio = data.budgetUsedRatio
-        if ratio > 0.9 { return TimelineEntryRelevance(score: 90) }
-        if ratio > 0.7 { return TimelineEntryRelevance(score: 60) }
-        if data.spentToday > data.dailyAverage && data.dailyAverage > 0 {
-            return TimelineEntryRelevance(score: 50)
-        }
-        return TimelineEntryRelevance(score: 20)
+        let r = data.budgetUsedRatio
+        if r > 0.9 { return .init(score: 90) }
+        if r > 0.7 { return .init(score: 60) }
+        if data.spentToday > data.dailyAverage && data.dailyAverage > 0 { return .init(score: 50) }
+        return .init(score: 20)
     }
 }
 
 // ============================================================
-// MARK: - 1. Today Spending Widget
+// MARK: - 1 · Today Spending
 // ============================================================
 
 struct TodaySpendingWidgetView: View {
     let entry: BalanceTimelineEntry
-    @Environment(\.widgetFamily) var family
+    @Environment(\.widgetFamily) var fam
 
     var body: some View {
-        let d = entry.data
-        let sym = d.currencySymbol
-
-        if d.isEmpty {
-            WidgetEmptyView(icon: "creditcard.fill", title: "Track Spending")
-        } else {
-            ZStack {
-                mainContent(d: d, sym: sym)
-                if d.isStale { StaleBanner() }
+        let d = entry.data, s = d.currencySymbol
+        if d.isEmpty { WidgetEmpty(icon: "creditcard", title: "Track Spending") }
+        else {
+            switch fam {
+            case .systemSmall:          small(d, s)
+            case .systemMedium:         medium(d, s)
+            case .accessoryCircular:    circ(d, s)
+            case .accessoryRectangular: rect(d, s)
+            case .accessoryInline:      Label("Today: \(moneyCompact(d.spentToday, s))", systemImage: "creditcard.fill")
+            default: small(d, s)
             }
         }
     }
 
-    @ViewBuilder
-    private func mainContent(d: WidgetSharedData, sym: String) -> some View {
-        switch family {
-        case .systemSmall:
-            smallView(d: d, sym: sym)
-        case .systemMedium:
-            mediumView(d: d, sym: sym)
-        case .accessoryCircular:
-            accessoryCircularView(d: d, sym: sym)
-        case .accessoryRectangular:
-            accessoryRectangularView(d: d, sym: sym)
-        case .accessoryInline:
-            accessoryInlineView(d: d, sym: sym)
-        default:
-            smallView(d: d, sym: sym)
-        }
-    }
+    // ── Small: Hero number + bar chart ──
+    private func small(_ d: WidgetSharedData, _ s: String) -> some View {
+        let weekly = d.weeklySpending ?? Array(repeating: d.dailyAverage, count: 7)
+        let over = d.spentToday > d.dailyAverage && d.dailyAverage > 0
 
-    private func smallView(d: WidgetSharedData, sym: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 0) {
+            // Header
             HStack {
-                Image(systemName: "creditcard.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("Today")
-                    .font(.caption)
+                Text("TODAY")
+                    .font(.system(size: 10, weight: .heavy, design: .rounded))
                     .foregroundStyle(.secondary)
                 Spacer()
+                Text("Day \(d.dayOfMonth)")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(.tertiary)
             }
 
-            Text(formatCentsFull(d.spentToday, symbol: sym))
-                .font(.system(size: 28, weight: .bold, design: .rounded))
-                .minimumScaleFactor(0.6)
+            Spacer(minLength: 4)
+
+            // Hero amount
+            Text(moneyFull(d.spentToday, s))
+                .font(.system(size: 34, weight: .heavy, design: .rounded).monospacedDigit())
+                .foregroundStyle(over ? WDS.warning : .primary)
+                .minimumScaleFactor(0.5)
                 .lineLimit(1)
 
-            Spacer()
+            Text("avg \(money(d.dailyAverage, s))/day")
+                .font(.system(size: 11, weight: .medium, design: .rounded).monospacedDigit())
+                .foregroundStyle(.secondary)
 
-            HStack {
-                Text("Avg")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Text(formatCents(d.dailyAverage, symbol: sym))
-                    .font(.caption2.bold())
-                    .foregroundStyle(.secondary)
-            }
+            Spacer(minLength: 6)
 
-            // Day progress
-            let progress = d.daysInMonth > 0
-                ? Double(d.dayOfMonth) / Double(d.daysInMonth)
-                : 0
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.gray.opacity(0.2))
-                        .frame(height: 4)
-                    Capsule()
-                        .fill(brandGradient)
-                        .frame(width: geo.size.width * max(0, min(1, progress)), height: 4)
-                }
-            }
-            .frame(height: 4)
+            // 7-day bar chart
+            MiniBarChart(
+                values: weekly,
+                highlightIndex: 6,
+                accentColor: over ? WDS.warning : WDS.accent,
+                showLabels: false,
+                showAvgLine: true
+            )
+            .frame(height: 30)
         }
-        .padding()
+        .padding(16)
     }
 
-    private func mediumView(d: WidgetSharedData, sym: String) -> some View {
-        HStack(spacing: 16) {
-            // Left: today spending
-            VStack(alignment: .leading, spacing: 6) {
-                Label("Today's Spending", systemImage: "creditcard.fill")
-                    .font(.caption)
+    // ── Medium: Spending + categories + add button ──
+    private func medium(_ d: WidgetSharedData, _ s: String) -> some View {
+        let weekly = d.weeklySpending ?? Array(repeating: d.dailyAverage, count: 7)
+        let cats = d.topCategories ?? []
+
+        return HStack(spacing: 0) {
+            // LEFT: Hero + area chart
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Spent in \(monthName)")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
 
-                Text(formatCentsFull(d.spentToday, symbol: sym))
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .minimumScaleFactor(0.6)
+                Spacer(minLength: 2)
+
+                Text(moneyFull(d.spentThisMonth, s))
+                    .font(.system(size: 30, weight: .heavy, design: .rounded).monospacedDigit())
+                    .minimumScaleFactor(0.5)
                     .lineLimit(1)
 
-                Spacer()
+                Spacer(minLength: 2)
 
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading) {
-                        Text("Daily Avg")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
-                        Text(formatCents(d.dailyAverage, symbol: sym))
-                            .font(.caption.bold())
-                    }
-                    VStack(alignment: .leading) {
-                        Text("This Month")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
-                        Text(formatCents(d.spentThisMonth, symbol: sym))
-                            .font(.caption.bold())
-                    }
+                // Area chart with gradient
+                ZStack(alignment: .bottom) {
+                    MiniAreaChart(values: weekly.map { Double($0) })
+                        .fill(
+                            LinearGradient(
+                                colors: [WDS.accent.opacity(0.3), WDS.accent.opacity(0.02)],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        )
+                    MiniAreaLine(values: weekly.map { Double($0) })
+                        .stroke(WDS.accent, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                }
+                .frame(height: 40)
+
+                Spacer(minLength: 4)
+
+                // Today badge
+                HStack(spacing: 4) {
+                    Circle().fill(WDS.accent).frame(width: 5, height: 5)
+                    Text("Today")
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                    Text(moneyFull(d.spentToday, s))
+                        .font(.system(size: 10, weight: .heavy, design: .rounded).monospacedDigit())
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            Divider()
+            // Thin divider
+            Rectangle()
+                .fill(.quaternary)
+                .frame(width: 0.5)
+                .padding(.vertical, 6)
+                .padding(.horizontal, 10)
 
-            // Right: budget status
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Budget")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            // RIGHT: Categories + Add button
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("CATEGORIES")
+                        .font(.system(size: 9, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
 
-                let ratio = d.budgetUsedRatio
-                let color = statusColor(ratio: ratio)
+                Spacer(minLength: 4)
 
-                Text(formatCents(d.remainingBudget, symbol: sym))
-                    .font(.title3.bold())
-                    .foregroundStyle(color)
+                // Category pills — flow layout
+                if !cats.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(cats.prefix(3)), id: \.id) { cat in
+                            CategoryPill(category: cat, currencySymbol: s)
+                        }
+                    }
+                } else {
+                    Text("No data yet")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
 
-                Text("remaining")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Spacer(minLength: 6)
 
-                Spacer()
-
-                ProgressView(value: min(1, ratio))
-                    .tint(color)
+                // Add button
+                HStack {
+                    Spacer()
+                    AddButton(size: 36)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding()
+        .padding(16)
     }
 
-    // MARK: Lock Screen Accessories
-
-    private func accessoryCircularView(d: WidgetSharedData, sym: String) -> some View {
-        let ratio = d.daysInMonth > 0
-            ? Double(d.dayOfMonth) / Double(d.daysInMonth)
-            : 0
-        return ZStack {
-            AccessoryWidgetBackground()
-            VStack(spacing: 1) {
-                Text(formatCentsCompact(d.spentToday, symbol: sym))
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .minimumScaleFactor(0.6)
-                Text("today")
-                    .font(.system(size: 8))
-                    .foregroundStyle(.secondary)
-            }
+    private func circ(_ d: WidgetSharedData, _ s: String) -> some View {
+        Gauge(value: min(1, Double(d.dayOfMonth) / Double(max(1, d.daysInMonth)))) {
+            Image(systemName: "creditcard.fill")
+        } currentValueLabel: {
+            Text(moneyCompact(d.spentToday, s))
+                .font(.system(size: 13, weight: .bold, design: .rounded).monospacedDigit())
+                .minimumScaleFactor(0.5)
         }
-        .widgetLabel {
-            ProgressView(value: min(1, ratio))
-        }
+        .gaugeStyle(.accessoryCircular)
     }
 
-    private func accessoryRectangularView(d: WidgetSharedData, sym: String) -> some View {
+    private func rect(_ d: WidgetSharedData, _ s: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
-                Image(systemName: "creditcard.fill")
-                    .font(.system(size: 10))
-                Text("Today")
-                    .font(.caption2)
-            }
-            .foregroundStyle(.secondary)
-
-            Text(formatCentsFull(d.spentToday, symbol: sym))
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .minimumScaleFactor(0.6)
-
-            Text("Avg \(formatCents(d.dailyAverage, symbol: sym)) · Month \(formatCents(d.spentThisMonth, symbol: sym))")
-                .font(.system(size: 9))
+            Label("Today", systemImage: "creditcard.fill")
+                .font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary)
+            Text(moneyFull(d.spentToday, s))
+                .font(.system(size: 18, weight: .bold, design: .rounded).monospacedDigit())
+            Text("Avg \(money(d.dailyAverage, s)) · Month \(money(d.spentThisMonth, s))")
+                .font(.system(size: 9, weight: .medium).monospacedDigit())
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
-    }
-
-    private func accessoryInlineView(d: WidgetSharedData, sym: String) -> some View {
-        Label(
-            "Today: \(formatCentsCompact(d.spentToday, symbol: sym))",
-            systemImage: "creditcard.fill"
-        )
     }
 }
 
 struct TodaySpendingWidget: Widget {
     let kind = "TodaySpendingWidget"
-
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: BalanceTimelineProvider()) { entry in
             TodaySpendingWidgetView(entry: entry)
                 .containerBackground(.fill.tertiary, for: .widget)
-                .widgetURL(WidgetDeepLink.dashboard)
+                .widgetURL(DL.dash)
         }
         .configurationDisplayName("Today's Spending")
         .description("See how much you've spent today.")
-        .supportedFamilies([
-            .systemSmall, .systemMedium,
-            .accessoryCircular, .accessoryRectangular, .accessoryInline
-        ])
+        .supportedFamilies([.systemSmall, .systemMedium, .accessoryCircular, .accessoryRectangular, .accessoryInline])
     }
 }
 
 // ============================================================
-// MARK: - 2. Budget Widget
+// MARK: - 2 · Budget
 // ============================================================
 
 struct BudgetWidgetView: View {
     let entry: BalanceTimelineEntry
-    @Environment(\.widgetFamily) var family
+    @Environment(\.widgetFamily) var fam
 
     var body: some View {
-        let d = entry.data
-        let sym = d.currencySymbol
-
-        if d.isEmpty {
-            WidgetEmptyView(icon: "chart.pie.fill", title: "Set Your Budget")
-        } else {
-            ZStack {
-                mainContent(d: d, sym: sym)
-                if d.isStale && family != .accessoryCircular { StaleBanner() }
+        let d = entry.data, s = d.currencySymbol
+        if d.isEmpty { WidgetEmpty(icon: "chart.pie", title: "Set Your Budget") }
+        else {
+            switch fam {
+            case .systemSmall:          small(d, s)
+            case .systemMedium:         medium(d, s)
+            case .systemLarge:          large(d, s)
+            case .accessoryCircular:    circ(d, s)
+            case .accessoryRectangular: rect(d, s)
+            default: small(d, s)
             }
         }
     }
 
-    @ViewBuilder
-    private func mainContent(d: WidgetSharedData, sym: String) -> some View {
-        switch family {
-        case .systemSmall:
-            smallBudget(d: d, sym: sym)
-        case .systemMedium:
-            mediumBudget(d: d, sym: sym)
-        case .systemLarge:
-            largeBudget(d: d, sym: sym)
-        case .accessoryCircular:
-            accessoryCircularBudget(d: d, sym: sym)
-        case .accessoryRectangular:
-            accessoryRectangularBudget(d: d, sym: sym)
-        default:
-            smallBudget(d: d, sym: sym)
-        }
-    }
-
-    private func smallBudget(d: WidgetSharedData, sym: String) -> some View {
+    // ── Small: Ring + remaining ──
+    private func small(_ d: WidgetSharedData, _ s: String) -> some View {
         let ratio = d.budgetUsedRatio
-        let color = statusColor(ratio: ratio)
+        let color = budgetColor(ratio)
 
-        return VStack(spacing: 8) {
+        return VStack(spacing: 0) {
             HStack {
-                Image(systemName: "chart.pie.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("Budget")
-                    .font(.caption)
+                Text("BUDGET")
+                    .font(.system(size: 10, weight: .heavy, design: .rounded))
                     .foregroundStyle(.secondary)
                 Spacer()
+                Text("\(d.daysRemainingInMonth)d left")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(.tertiary)
             }
 
-            ZStack {
-                Circle()
-                    .stroke(Color.gray.opacity(0.2), lineWidth: 6)
-                Circle()
-                    .trim(from: 0, to: min(1, ratio))
-                    .stroke(color, style: StrokeStyle(lineWidth: 6, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
+            Spacer(minLength: 6)
 
-                VStack(spacing: 0) {
+            // Custom ring
+            ZStack {
+                ProgressRing(progress: min(1, ratio), color: color, lineWidth: 8, size: 72)
+                VStack(spacing: 1) {
                     Text("\(Int(min(ratio, 9.99) * 100))%")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .font(.system(size: 22, weight: .heavy, design: .rounded).monospacedDigit())
                     Text("used")
-                        .font(.system(size: 9))
+                        .font(.system(size: 9, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
             }
-            .frame(width: 70, height: 70)
 
-            Text(formatCents(d.remainingBudget, symbol: sym) + " left")
-                .font(.caption2.bold())
+            Spacer(minLength: 6)
+
+            Text(money(d.remainingBudget, s) + " left")
+                .font(.system(size: 14, weight: .bold, design: .rounded).monospacedDigit())
                 .foregroundStyle(color)
         }
-        .padding()
+        .padding(16)
     }
 
-    private func mediumBudget(d: WidgetSharedData, sym: String) -> some View {
+    // ── Medium: Ring + stats + bar chart ──
+    private func medium(_ d: WidgetSharedData, _ s: String) -> some View {
         let ratio = d.budgetUsedRatio
-        let color = statusColor(ratio: ratio)
+        let color = budgetColor(ratio)
+        let weekly = d.weeklySpending ?? Array(repeating: d.dailyAverage, count: 7)
+        let dayProg = d.daysInMonth > 0 ? Double(d.dayOfMonth) / Double(d.daysInMonth) : 0
+        let ahead = ratio > dayProg + 0.05
 
-        return HStack(spacing: 16) {
+        return HStack(spacing: 14) {
             // Ring
-            ZStack {
-                Circle()
-                    .stroke(Color.gray.opacity(0.2), lineWidth: 8)
-                Circle()
-                    .trim(from: 0, to: min(1, ratio))
-                    .stroke(color, style: StrokeStyle(lineWidth: 8, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                VStack(spacing: 0) {
-                    Text("\(Int(min(ratio, 9.99) * 100))%")
-                        .font(.system(size: 22, weight: .bold, design: .rounded))
-                    Text("used")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
+            VStack(spacing: 6) {
+                ZStack {
+                    ProgressRing(progress: min(1, ratio), color: color, lineWidth: 8, size: 76)
+                    VStack(spacing: 1) {
+                        Text("\(Int(min(ratio, 9.99) * 100))%")
+                            .font(.system(size: 24, weight: .heavy, design: .rounded).monospacedDigit())
+                        Text("used")
+                            .font(.system(size: 9, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
                 }
-            }
-            .frame(width: 80, height: 80)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Monthly Budget")
-                    .font(.caption)
+                // Pace pill
+                HStack(spacing: 3) {
+                    Circle().fill(ahead ? WDS.danger : WDS.positive).frame(width: 5, height: 5)
+                    Text(ahead ? "Over pace" : "On track")
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundStyle(ahead ? WDS.danger : WDS.positive)
+                }
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background((ahead ? WDS.danger : WDS.positive).opacity(0.1), in: Capsule())
+            }
+
+            // Stats + chart
+            VStack(alignment: .leading, spacing: 0) {
+                Text("MONTHLY BUDGET")
+                    .font(.system(size: 9, weight: .heavy, design: .rounded))
                     .foregroundStyle(.secondary)
 
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text("Budget")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
-                        Text(formatCents(d.budgetTotal, symbol: sym))
-                            .font(.caption.bold())
-                    }
-                    Spacer()
-                    VStack(alignment: .leading) {
-                        Text("Spent")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
-                        Text(formatCents(d.spentThisMonth, symbol: sym))
-                            .font(.caption.bold())
-                    }
-                }
+                Spacer(minLength: 4)
 
                 HStack {
-                    VStack(alignment: .leading) {
-                        Text("Remaining")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
-                        Text(formatCents(d.remainingBudget, symbol: sym))
-                            .font(.caption.bold())
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(money(d.remainingBudget, s))
+                            .font(.system(size: 22, weight: .heavy, design: .rounded).monospacedDigit())
                             .foregroundStyle(color)
+                        Text("remaining of \(money(d.budgetTotal, s))")
+                            .font(.system(size: 9, weight: .medium, design: .rounded).monospacedDigit())
+                            .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    VStack(alignment: .leading) {
-                        Text("Days Left")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
-                        Text("\(d.daysRemainingInMonth)")
-                            .font(.caption.bold())
-                    }
                 }
+
+                Spacer(minLength: 6)
+
+                // Bar chart
+                MiniBarChart(
+                    values: weekly,
+                    highlightIndex: 6,
+                    accentColor: color,
+                    showLabels: true,
+                    showAvgLine: true
+                )
+                .frame(height: 42)
             }
         }
-        .padding()
+        .padding(16)
     }
 
-    // MARK: Large Budget
-
-    private func largeBudget(d: WidgetSharedData, sym: String) -> some View {
+    // ── Large: Full dashboard ──
+    private func large(_ d: WidgetSharedData, _ s: String) -> some View {
         let ratio = d.budgetUsedRatio
-        let color = statusColor(ratio: ratio)
-        let dayProgress = d.daysInMonth > 0
-            ? Double(d.dayOfMonth) / Double(d.daysInMonth)
-            : 0
+        let color = budgetColor(ratio)
+        let weekly = d.weeklySpending ?? Array(repeating: d.dailyAverage, count: 7)
+        let dayProg = d.daysInMonth > 0 ? Double(d.dayOfMonth) / Double(d.daysInMonth) : 0
+        let ahead = ratio > dayProg + 0.05
 
-        return VStack(spacing: 12) {
-            // Header
+        return VStack(spacing: 0) {
+            // Header row
             HStack {
                 Image(systemName: "chart.pie.fill")
-                    .font(.subheadline)
-                    .foregroundStyle(brandColor)
-                Text("Monthly Budget")
-                    .font(.subheadline.bold())
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(color)
+                Text("MONTHLY BUDGET")
+                    .font(.system(size: 11, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.secondary)
                 Spacer()
                 Text("Day \(d.dayOfMonth) of \(d.daysInMonth)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(.tertiary)
             }
 
-            // Big ring + summary
+            Spacer(minLength: 10)
+
+            // Ring + hero stats
             HStack(spacing: 20) {
                 ZStack {
-                    Circle()
-                        .stroke(Color.gray.opacity(0.15), lineWidth: 10)
-                    Circle()
-                        .trim(from: 0, to: min(1, ratio))
-                        .stroke(color, style: StrokeStyle(lineWidth: 10, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                    VStack(spacing: 2) {
+                    ProgressRing(progress: min(1, ratio), color: color, lineWidth: 10, size: 96)
+                    VStack(spacing: 1) {
                         Text("\(Int(min(ratio, 9.99) * 100))%")
-                            .font(.system(size: 26, weight: .bold, design: .rounded))
+                            .font(.system(size: 28, weight: .heavy, design: .rounded).monospacedDigit())
                         Text("used")
-                            .font(.system(size: 10))
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
                             .foregroundStyle(.secondary)
                     }
                 }
-                .frame(width: 90, height: 90)
 
-                VStack(alignment: .leading, spacing: 10) {
-                    largeStat(label: "Budget", value: formatCentsFull(d.budgetTotal, symbol: sym), color: .primary)
-                    largeStat(label: "Spent", value: formatCentsFull(d.spentThisMonth, symbol: sym), color: .primary)
-                    largeStat(label: "Remaining", value: formatCentsFull(d.remainingBudget, symbol: sym), color: color)
+                VStack(alignment: .leading, spacing: 6) {
+                    statRow("Budget", moneyFull(d.budgetTotal, s), .primary)
+                    statRow("Spent", moneyFull(d.spentThisMonth, s), .primary)
+                    statRow("Remaining", moneyFull(d.remainingBudget, s), color)
                 }
             }
 
-            Divider()
+            Spacer(minLength: 10)
 
-            // Bottom metrics
+            // Divider
+            Rectangle().fill(.quaternary).frame(height: 0.5)
+
+            Spacer(minLength: 10)
+
+            // Bar chart with labels
+            MiniBarChart(
+                values: weekly,
+                highlightIndex: 6,
+                accentColor: color,
+                showLabels: true,
+                showAvgLine: true
+            )
+            .frame(height: 60)
+
+            Spacer(minLength: 10)
+
+            // Metrics row
             HStack(spacing: 0) {
-                largeMetric(icon: "calendar", label: "Days Left", value: "\(d.daysRemainingInMonth)")
-                Spacer()
-                largeMetric(icon: "arrow.down", label: "Daily Avg", value: formatCents(d.dailyAverage, symbol: sym))
-                Spacer()
-                largeMetric(icon: "shield.checkered", label: "Safe/Day", value: formatCents(d.safeToSpendPerDay, symbol: sym))
-                Spacer()
-                largeMetric(icon: "arrow.up", label: "Income", value: formatCents(d.incomeThisMonth, symbol: sym))
+                metricCol("calendar", "\(d.daysRemainingInMonth)", "Days Left")
+                metricCol("arrow.down", money(d.dailyAverage, s), "Daily Avg")
+                metricCol("shield.checkered", money(d.safeToSpendPerDay, s), "Safe/Day")
+                metricCol("arrow.up", money(d.incomeThisMonth, s), "Income")
             }
 
-            // Progress bar: budget vs time
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Budget pace")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    let paceStatus = ratio > dayProgress + 0.1 ? "Ahead of budget" : (ratio < dayProgress - 0.1 ? "Under budget" : "On track")
-                    Text(paceStatus)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(ratio > dayProgress + 0.1 ? .red : .green)
+            Spacer(minLength: 8)
+
+            // Pace bar
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.primary.opacity(0.06)).frame(height: 6)
+                    Capsule().fill(color).frame(width: geo.size.width * min(1, ratio), height: 6)
+                    // Time marker
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(Color.primary.opacity(0.35))
+                        .frame(width: 2, height: 12)
+                        .offset(x: geo.size.width * min(1, dayProg) - 1)
                 }
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        // Full track
-                        Capsule().fill(Color.gray.opacity(0.15)).frame(height: 6)
-                        // Budget usage
-                        Capsule().fill(color).frame(width: geo.size.width * min(1, ratio), height: 6)
-                        // Time marker
-                        Rectangle()
-                            .fill(Color.primary.opacity(0.4))
-                            .frame(width: 2, height: 10)
-                            .offset(x: geo.size.width * min(1, dayProgress) - 1)
-                    }
-                }
-                .frame(height: 10)
             }
+            .frame(height: 12)
+
+            HStack {
+                Text("Budget pace")
+                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                HStack(spacing: 3) {
+                    Circle().fill(ahead ? WDS.danger : WDS.positive).frame(width: 4, height: 4)
+                    Text(ahead ? "Spending too fast" : "On track")
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundStyle(ahead ? WDS.danger : WDS.positive)
+                }
+            }
+            .padding(.top, 4)
         }
-        .padding()
+        .padding(16)
     }
 
-    private func largeStat(label: String, value: String, color: Color) -> some View {
+    private func statRow(_ label: String, _ value: String, _ color: Color) -> some View {
         HStack {
-            Text(label)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .frame(width: 65, alignment: .leading)
-            Text(value)
-                .font(.system(size: 14, weight: .semibold, design: .rounded))
-                .foregroundStyle(color)
+            Text(label).font(.system(size: 11, weight: .medium, design: .rounded)).foregroundStyle(.secondary)
+            Spacer()
+            Text(value).font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(color)
         }
     }
 
-    private func largeMetric(icon: String, label: String, value: String) -> some View {
+    private func metricCol(_ icon: String, _ value: String, _ label: String) -> some View {
         VStack(spacing: 3) {
             Image(systemName: icon)
-                .font(.system(size: 10))
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
+                .lineLimit(1).minimumScaleFactor(0.7)
             Text(label)
-                .font(.system(size: 8))
+                .font(.system(size: 8, weight: .medium, design: .rounded))
                 .foregroundStyle(.secondary)
         }
-        .frame(minWidth: 55)
+        .frame(maxWidth: .infinity)
     }
 
-    // MARK: Lock Screen Accessories
-
-    private func accessoryCircularBudget(d: WidgetSharedData, sym: String) -> some View {
-        let ratio = d.budgetUsedRatio
-        return Gauge(value: min(1, ratio)) {
-            Text(sym)
-                .font(.system(size: 10))
+    private func circ(_ d: WidgetSharedData, _ s: String) -> some View {
+        Gauge(value: min(1, d.budgetUsedRatio)) {
+            Text(s).font(.system(size: 10, weight: .bold))
         } currentValueLabel: {
-            Text("\(Int(min(ratio, 9.99) * 100))%")
-                .font(.system(size: 14, weight: .bold, design: .rounded))
+            Text("\(Int(min(d.budgetUsedRatio, 9.99) * 100))%")
+                .font(.system(size: 14, weight: .bold, design: .rounded).monospacedDigit())
         }
         .gaugeStyle(.accessoryCircular)
     }
 
-    private func accessoryRectangularBudget(d: WidgetSharedData, sym: String) -> some View {
+    private func rect(_ d: WidgetSharedData, _ s: String) -> some View {
         let ratio = d.budgetUsedRatio
         return VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
-                Image(systemName: "chart.pie.fill")
-                    .font(.system(size: 10))
-                Text("Budget · \(Int(min(ratio, 9.99) * 100))% used")
-                    .font(.caption2)
-            }
-            .foregroundStyle(.secondary)
-
-            Text(formatCents(d.remainingBudget, symbol: sym) + " left")
-                .font(.system(size: 16, weight: .bold, design: .rounded))
-                .minimumScaleFactor(0.6)
-
-            Gauge(value: min(1, ratio)) { EmptyView() }
-                .gaugeStyle(.accessoryLinear)
+            Label("Budget · \(Int(min(ratio, 9.99) * 100))%", systemImage: "chart.pie.fill")
+                .font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary)
+            Text(money(d.remainingBudget, s) + " left")
+                .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
+            Gauge(value: min(1, ratio)) { SwiftUI.EmptyView() }.gaugeStyle(.accessoryLinear)
         }
     }
 }
 
 struct BudgetWidget: Widget {
     let kind = "BudgetWidget"
-
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: BalanceTimelineProvider()) { entry in
             BudgetWidgetView(entry: entry)
                 .containerBackground(.fill.tertiary, for: .widget)
-                .widgetURL(WidgetDeepLink.budget)
+                .widgetURL(DL.budget)
         }
         .configurationDisplayName("Budget")
         .description("Track your monthly budget at a glance.")
-        .supportedFamilies([
-            .systemSmall, .systemMedium, .systemLarge,
-            .accessoryCircular, .accessoryRectangular
-        ])
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .accessoryCircular, .accessoryRectangular])
     }
 }
 
 // ============================================================
-// MARK: - 3. Upcoming Bills Widget
+// MARK: - 3 · Upcoming Bills
 // ============================================================
 
 struct UpcomingBillsWidgetView: View {
     let entry: BalanceTimelineEntry
-    @Environment(\.widgetFamily) var family
+    @Environment(\.widgetFamily) var fam
 
     var body: some View {
-        let d = entry.data
-        let sym = d.currencySymbol
-
-        if d.isEmpty {
-            WidgetEmptyView(icon: "calendar.badge.clock", title: "Track Bills")
-        } else {
-            ZStack {
-                mainContent(d: d, sym: sym)
-                if d.isStale { StaleBanner() }
+        let d = entry.data, s = d.currencySymbol
+        if d.isEmpty { WidgetEmpty(icon: "calendar.badge.clock", title: "Track Bills") }
+        else {
+            switch fam {
+            case .accessoryRectangular: rect(d, s)
+            default: home(d, s)
             }
         }
     }
 
-    @ViewBuilder
-    private func mainContent(d: WidgetSharedData, sym: String) -> some View {
-        switch family {
-        case .accessoryRectangular:
-            accessoryRectangularBills(d: d, sym: sym)
-        default:
-            homeScreenBills(d: d, sym: sym)
-        }
-    }
+    private func home(_ d: WidgetSharedData, _ s: String) -> some View {
+        let bills = d.upcomingBills.prefix(fam == .systemSmall ? 2 : 4)
+        let total = d.upcomingBills.reduce(0) { $0 + $1.amount }
 
-    private func homeScreenBills(d: WidgetSharedData, sym: String) -> some View {
-        let bills = d.upcomingBills.prefix(family == .systemSmall ? 2 : 4)
-
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 0) {
+            // Header
             HStack {
-                Image(systemName: "calendar.badge.clock")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("Upcoming Bills")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 5) {
+                    Image(systemName: "calendar.badge.clock")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(WDS.accent)
+                    Text("UPCOMING BILLS")
+                        .font(.system(size: 10, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 if !bills.isEmpty {
-                    let total = d.upcomingBills.reduce(0) { $0 + $1.amount }
-                    Text(formatCents(total, symbol: sym))
-                        .font(.caption2.bold())
-                        .foregroundStyle(brandColor)
+                    Text(money(total, s))
+                        .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(WDS.accent)
                 }
             }
 
             if bills.isEmpty {
                 Spacer()
-                HStack {
-                    Spacer()
-                    VStack(spacing: 4) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.title2)
-                            .foregroundStyle(.green)
-                        Text("All clear!")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
+                VStack(spacing: 6) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 30, weight: .light))
+                        .foregroundStyle(WDS.positive)
+                    Text("All clear!")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundStyle(.secondary)
                 }
+                .frame(maxWidth: .infinity)
                 Spacer()
             } else {
-                ForEach(Array(bills.enumerated()), id: \.element.id) { _, bill in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(bill.name)
-                                .font(.caption.bold())
-                                .lineLimit(1)
-                            Text(bill.dueDate, style: .date)
-                                .font(.system(size: 9))
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Text(formatCentsFull(bill.amount, symbol: sym))
-                            .font(.caption.bold())
-                            .foregroundStyle(brandColor)
-                    }
-                    if bill.id != bills.last?.id {
-                        Divider()
+                Spacer(minLength: 8)
+                ForEach(Array(bills.enumerated()), id: \.element.id) { i, bill in
+                    billRow(bill, s)
+                    if i < bills.count - 1 {
+                        Rectangle()
+                            .fill(.quaternary)
+                            .frame(height: 0.5)
+                            .padding(.leading, 28)
                     }
                 }
                 Spacer(minLength: 0)
             }
         }
-        .padding()
+        .padding(16)
     }
 
-    private func accessoryRectangularBills(d: WidgetSharedData, sym: String) -> some View {
+    private func billRow(_ bill: WidgetBill, _ s: String) -> some View {
+        let days = Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: .now), to: Calendar.current.startOfDay(for: bill.dueDate)).day ?? 0
+        let overdue = days < 0
+        let urgent = days >= 0 && days <= 3
+        let dot: Color = overdue ? WDS.danger : (urgent ? WDS.warning : WDS.accent)
+
+        return HStack(spacing: 10) {
+            // Status dot with glow
+            ZStack {
+                Circle().fill(dot.opacity(0.2)).frame(width: 18, height: 18)
+                Circle().fill(dot).frame(width: 7, height: 7)
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(bill.name)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+                Text(overdue ? "\(abs(days))d overdue" : (days == 0 ? "Due today" : "in \(days) days"))
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(dot)
+            }
+            Spacer()
+            Text(moneyFull(bill.amount, s))
+                .font(.system(size: 14, weight: .bold, design: .rounded).monospacedDigit())
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func rect(_ d: WidgetSharedData, _ s: String) -> some View {
         let bills = d.upcomingBills.prefix(2)
         return VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
-                Image(systemName: "calendar.badge.clock")
-                    .font(.system(size: 10))
-                Text("Bills")
-                    .font(.caption2)
-            }
-            .foregroundStyle(.secondary)
-
+            Label("Bills", systemImage: "calendar.badge.clock")
+                .font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary)
             if bills.isEmpty {
-                Text("No upcoming bills")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Text("All clear ✓").font(.system(size: 12, weight: .semibold))
             } else {
                 ForEach(Array(bills.enumerated()), id: \.element.id) { _, bill in
                     HStack {
-                        Text(bill.name)
-                            .font(.caption2.bold())
-                            .lineLimit(1)
+                        Text(bill.name).font(.system(size: 11, weight: .bold)).lineLimit(1)
                         Spacer()
-                        Text(formatCentsCompact(bill.amount, symbol: sym))
-                            .font(.caption2)
+                        Text(moneyCompact(bill.amount, s)).font(.system(size: 11, weight: .bold, design: .rounded).monospacedDigit())
                     }
                 }
             }
@@ -831,12 +968,11 @@ struct UpcomingBillsWidgetView: View {
 
 struct UpcomingBillsWidget: Widget {
     let kind = "UpcomingBillsWidget"
-
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: BalanceTimelineProvider()) { entry in
             UpcomingBillsWidgetView(entry: entry)
                 .containerBackground(.fill.tertiary, for: .widget)
-                .widgetURL(WidgetDeepLink.bills)
+                .widgetURL(DL.bills)
         }
         .configurationDisplayName("Upcoming Bills")
         .description("Never miss a bill payment.")
@@ -845,364 +981,371 @@ struct UpcomingBillsWidget: Widget {
 }
 
 // ============================================================
-// MARK: - 4. Safe to Spend Widget
+// MARK: - 4 · Safe to Spend
 // ============================================================
 
 struct SafeToSpendWidgetView: View {
     let entry: BalanceTimelineEntry
-    @Environment(\.widgetFamily) var family
+    @Environment(\.widgetFamily) var fam
 
     var body: some View {
-        let d = entry.data
-        let sym = d.currencySymbol
-
-        if d.isEmpty {
-            WidgetEmptyView(icon: "shield.checkered", title: "Safe to Spend")
-        } else {
-            ZStack {
-                mainContent(d: d, sym: sym)
-                if d.isStale && family != .accessoryCircular { StaleBanner() }
+        let d = entry.data, s = d.currencySymbol
+        if d.isEmpty { WidgetEmpty(icon: "shield.checkered", title: "Safe to Spend") }
+        else {
+            switch fam {
+            case .systemSmall:          small(d, s)
+            case .systemMedium:         medium(d, s)
+            case .accessoryCircular:    circ(d, s)
+            case .accessoryRectangular: rect(d, s)
+            case .accessoryInline:      Label("Safe: \(moneyCompact(d.safeToSpendTotal, s))", systemImage: "shield.checkered")
+            default: small(d, s)
             }
         }
     }
 
-    @ViewBuilder
-    private func mainContent(d: WidgetSharedData, sym: String) -> some View {
-        switch family {
-        case .systemSmall:
-            smallSafe(d: d, sym: sym)
-        case .systemMedium:
-            mediumSafe(d: d, sym: sym)
-        case .accessoryCircular:
-            accessoryCircularSafe(d: d, sym: sym)
-        case .accessoryRectangular:
-            accessoryRectangularSafe(d: d, sym: sym)
-        case .accessoryInline:
-            accessoryInlineSafe(d: d, sym: sym)
-        default:
-            smallSafe(d: d, sym: sym)
-        }
-    }
+    // ── Small: Ring + amount + status ──
+    private func small(_ d: WidgetSharedData, _ s: String) -> some View {
+        let risk = riskColor(d.riskLevel)
+        let label = d.riskLevel == "highRisk" ? "High Risk" : (d.riskLevel == "caution" ? "Caution" : "Healthy")
+        let ratio = d.budgetTotal > 0 ? min(1.0, max(0, Double(d.safeToSpendTotal) / Double(d.budgetTotal))) : 0.5
+        let statusIcon = d.riskLevel == "safe" ? "checkmark" : (d.riskLevel == "caution" ? "exclamationmark" : "xmark")
 
-    private func smallSafe(d: WidgetSharedData, sym: String) -> some View {
-        let risk = riskColor(for: d.riskLevel)
-
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(spacing: 0) {
             HStack {
-                Image(systemName: "shield.checkered")
-                    .font(.caption)
-                    .foregroundStyle(risk)
-                Text("Safe to Spend")
-                    .font(.caption)
+                Text("SAFE TO SPEND")
+                    .font(.system(size: 9, weight: .heavy, design: .rounded))
                     .foregroundStyle(.secondary)
                 Spacer()
             }
 
-            Text(formatCentsFull(d.safeToSpendTotal, symbol: sym))
-                .font(.system(size: 26, weight: .bold, design: .rounded))
+            Spacer(minLength: 4)
+
+            // Ring with status icon
+            ZStack {
+                ProgressRing(progress: ratio, color: risk, lineWidth: 7, size: 64)
+                Image(systemName: statusIcon)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(risk)
+            }
+
+            Spacer(minLength: 4)
+
+            Text(moneyFull(d.safeToSpendTotal, s))
+                .font(.system(size: 22, weight: .heavy, design: .rounded).monospacedDigit())
                 .foregroundStyle(risk)
                 .minimumScaleFactor(0.6)
                 .lineLimit(1)
 
-            Spacer()
-
-            HStack {
-                Text(formatCents(d.safeToSpendPerDay, symbol: sym))
-                    .font(.caption.bold())
-                Text("/ day")
-                    .font(.caption2)
+            HStack(spacing: 4) {
+                Text(money(d.safeToSpendPerDay, s) + "/day")
+                    .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
 
-            // Risk indicator
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(risk)
-                    .frame(width: 6, height: 6)
-                Text(d.riskLevel == "highRisk" ? "High Risk" : (d.riskLevel == "caution" ? "Caution" : "Safe"))
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(risk)
-            }
+            Spacer(minLength: 2)
+
+            // Status pill
+            Text(label)
+                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .foregroundStyle(risk)
+                .padding(.horizontal, 10).padding(.vertical, 3)
+                .background(risk.opacity(0.1), in: Capsule())
         }
-        .padding()
+        .padding(16)
     }
 
-    private func mediumSafe(d: WidgetSharedData, sym: String) -> some View {
-        let risk = riskColor(for: d.riskLevel)
+    // ── Medium: Ring + stats + add button ──
+    private func medium(_ d: WidgetSharedData, _ s: String) -> some View {
+        let risk = riskColor(d.riskLevel)
+        let label = d.riskLevel == "highRisk" ? "High Risk" : (d.riskLevel == "caution" ? "Caution" : "Healthy")
+        let ratio = d.budgetTotal > 0 ? min(1.0, max(0, Double(d.safeToSpendTotal) / Double(d.budgetTotal))) : 0.5
+        let statusIcon = d.riskLevel == "safe" ? "checkmark" : (d.riskLevel == "caution" ? "exclamationmark" : "xmark")
+        let weekly = d.weeklySpending ?? Array(repeating: d.dailyAverage, count: 7)
 
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Image(systemName: "shield.checkered")
-                    .font(.caption)
-                    .foregroundStyle(risk)
-                Text("Safe to Spend")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                // Risk badge
-                HStack(spacing: 4) {
-                    Circle().fill(risk).frame(width: 6, height: 6)
-                    Text(d.riskLevel == "highRisk" ? "High Risk" : (d.riskLevel == "caution" ? "Caution" : "Safe"))
-                        .font(.system(size: 10, weight: .medium))
+        return HStack(spacing: 14) {
+            // Left: Ring + pill
+            VStack(spacing: 6) {
+                ZStack {
+                    ProgressRing(progress: ratio, color: risk, lineWidth: 8, size: 76)
+                    Image(systemName: statusIcon)
+                        .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(risk)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(risk.opacity(0.12), in: Capsule())
+
+                Text(label)
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .foregroundStyle(risk)
+                    .padding(.horizontal, 10).padding(.vertical, 3)
+                    .background(risk.opacity(0.1), in: Capsule())
             }
 
-            Text(formatCentsFull(d.safeToSpendTotal, symbol: sym))
-                .font(.system(size: 26, weight: .bold, design: .rounded))
-                .foregroundStyle(risk)
-                .minimumScaleFactor(0.6)
-                .lineLimit(1)
+            // Right: Amount + breakdown + chart
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("SAFE TO SPEND")
+                        .font(.system(size: 9, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    AddButton(size: 28)
+                }
 
-            Spacer()
+                Spacer(minLength: 2)
 
-            HStack(spacing: 16) {
-                infoBlock(title: "Per Day", value: formatCents(d.safeToSpendPerDay, symbol: sym))
-                infoBlock(title: "Bills Reserved", value: formatCents(d.reservedForBills, symbol: sym))
-                infoBlock(title: "Goals Reserved", value: formatCents(d.reservedForGoals, symbol: sym))
-                infoBlock(title: "Days Left", value: "\(d.daysRemainingInMonth)")
+                Text(moneyFull(d.safeToSpendTotal, s))
+                    .font(.system(size: 26, weight: .heavy, design: .rounded).monospacedDigit())
+                    .foregroundStyle(risk)
+                    .minimumScaleFactor(0.5)
+                    .lineLimit(1)
+
+                Spacer(minLength: 4)
+
+                // Mini area chart
+                ZStack(alignment: .bottom) {
+                    MiniAreaChart(values: weekly.map { Double($0) })
+                        .fill(
+                            LinearGradient(
+                                colors: [risk.opacity(0.25), risk.opacity(0.02)],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        )
+                    MiniAreaLine(values: weekly.map { Double($0) })
+                        .stroke(risk, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                }
+                .frame(height: 28)
+
+                Spacer(minLength: 4)
+
+                HStack(spacing: 12) {
+                    HStack(spacing: 3) {
+                        Text(money(d.safeToSpendPerDay, s)).font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit())
+                        Text("/day").font(.system(size: 9, weight: .medium, design: .rounded)).foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 3) {
+                        Text("\(d.daysRemainingInMonth)").font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit())
+                        Text("days left").font(.system(size: 9, weight: .medium, design: .rounded)).foregroundStyle(.secondary)
+                    }
+                }
             }
         }
-        .padding()
+        .padding(16)
     }
 
-    private func infoBlock(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.system(size: 9))
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.caption.bold())
-        }
-    }
-
-    // MARK: Lock Screen Accessories
-
-    private func accessoryCircularSafe(d: WidgetSharedData, sym: String) -> some View {
-        let ratio = d.budgetTotal > 0
-            ? Double(d.safeToSpendTotal) / Double(d.budgetTotal)
-            : 0
+    private func circ(_ d: WidgetSharedData, _ s: String) -> some View {
+        let ratio = d.budgetTotal > 0 ? Double(d.safeToSpendTotal) / Double(d.budgetTotal) : 0
         return Gauge(value: min(1, max(0, ratio))) {
-            Image(systemName: "shield.checkered")
-                .font(.system(size: 10))
+            Image(systemName: "shield.checkered").font(.system(size: 10, weight: .bold))
         } currentValueLabel: {
-            Text(formatCentsCompact(d.safeToSpendTotal, symbol: sym))
-                .font(.system(size: 12, weight: .bold, design: .rounded))
+            Text(moneyCompact(d.safeToSpendTotal, s))
+                .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
                 .minimumScaleFactor(0.5)
         }
         .gaugeStyle(.accessoryCircular)
     }
 
-    private func accessoryRectangularSafe(d: WidgetSharedData, sym: String) -> some View {
+    private func rect(_ d: WidgetSharedData, _ s: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
-                Image(systemName: "shield.checkered")
-                    .font(.system(size: 10))
-                Text("Safe to Spend")
-                    .font(.caption2)
-            }
-            .foregroundStyle(.secondary)
-
-            Text(formatCentsFull(d.safeToSpendTotal, symbol: sym))
-                .font(.system(size: 16, weight: .bold, design: .rounded))
-                .minimumScaleFactor(0.6)
-
-            Text("\(formatCentsCompact(d.safeToSpendPerDay, symbol: sym))/day · \(d.daysRemainingInMonth)d left")
-                .font(.system(size: 9))
+            Label("Safe to Spend", systemImage: "shield.checkered")
+                .font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary)
+            Text(moneyFull(d.safeToSpendTotal, s))
+                .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
+            Text("\(moneyCompact(d.safeToSpendPerDay, s))/day · \(d.daysRemainingInMonth)d left")
+                .font(.system(size: 9, weight: .medium).monospacedDigit())
                 .foregroundStyle(.secondary)
         }
-    }
-
-    private func accessoryInlineSafe(d: WidgetSharedData, sym: String) -> some View {
-        Label(
-            "Safe: \(formatCentsCompact(d.safeToSpendTotal, symbol: sym))",
-            systemImage: "shield.checkered"
-        )
     }
 }
 
 struct SafeToSpendWidget: Widget {
     let kind = "SafeToSpendWidget"
-
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: BalanceTimelineProvider()) { entry in
             SafeToSpendWidgetView(entry: entry)
                 .containerBackground(.fill.tertiary, for: .widget)
-                .widgetURL(WidgetDeepLink.safeToSpend)
+                .widgetURL(DL.safe)
         }
         .configurationDisplayName("Safe to Spend")
-        .description("Know how much you can safely spend.")
-        .supportedFamilies([
-            .systemSmall, .systemMedium,
-            .accessoryCircular, .accessoryRectangular, .accessoryInline
-        ])
+        .description("Your financial health at a glance.")
+        .supportedFamilies([.systemSmall, .systemMedium, .accessoryCircular, .accessoryRectangular, .accessoryInline])
     }
 }
 
 // ============================================================
-// MARK: - 5. Net Worth Widget
+// MARK: - 5 · Net Worth
 // ============================================================
 
 struct NetWorthWidgetView: View {
     let entry: BalanceTimelineEntry
-    @Environment(\.widgetFamily) var family
+    @Environment(\.widgetFamily) var fam
 
     var body: some View {
-        let d = entry.data
-        let sym = d.currencySymbol
-
-        if d.isEmpty {
-            WidgetEmptyView(icon: "building.columns.fill", title: "Track Net Worth")
-        } else {
-            ZStack {
-                mainContent(d: d, sym: sym)
-                if d.isStale { StaleBanner() }
+        let d = entry.data, s = d.currencySymbol
+        if d.isEmpty { WidgetEmpty(icon: "building.columns", title: "Track Net Worth") }
+        else {
+            switch fam {
+            case .systemSmall:  smallNW(d, s)
+            case .systemMedium: mediumNW(d, s)
+            case .accessoryRectangular: rectNW(d, s)
+            default: smallNW(d, s)
             }
         }
     }
 
-    @ViewBuilder
-    private func mainContent(d: WidgetSharedData, sym: String) -> some View {
-        switch family {
-        case .systemSmall:
-            smallNetWorth(d: d, sym: sym)
-        case .systemMedium:
-            mediumNetWorth(d: d, sym: sym)
-        case .accessoryRectangular:
-            accessoryRectangularNetWorth(d: d, sym: sym)
-        default:
-            smallNetWorth(d: d, sym: sym)
-        }
-    }
+    // ── Small: Hero + asset/liability bars ──
+    private func smallNW(_ d: WidgetSharedData, _ s: String) -> some View {
+        let positive = d.netWorth >= 0
 
-    private func smallNetWorth(d: WidgetSharedData, sym: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 5) {
                 Image(systemName: "building.columns.fill")
-                    .font(.caption)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(WDS.accent)
+                Text("NET WORTH")
+                    .font(.system(size: 10, weight: .heavy, design: .rounded))
                     .foregroundStyle(.secondary)
-                Text("Net Worth")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
             }
 
-            Text(formatCentsFull(d.netWorth, symbol: sym))
-                .font(.system(size: 26, weight: .bold, design: .rounded))
-                .foregroundStyle(d.netWorth >= 0 ? brandColor : .red)
-                .minimumScaleFactor(0.6)
+            Spacer(minLength: 6)
+
+            Text(moneyFull(d.netWorth, s))
+                .font(.system(size: 28, weight: .heavy, design: .rounded).monospacedDigit())
+                .foregroundStyle(positive ? WDS.accent : WDS.danger)
+                .minimumScaleFactor(0.5)
                 .lineLimit(1)
 
-            Spacer()
+            Spacer(minLength: 8)
+
+            // Stacked horizontal bars
+            if d.totalAssets + abs(d.totalLiabilities) > 0 {
+                let maxV = max(d.totalAssets, abs(d.totalLiabilities), 1)
+                VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Assets").font(.system(size: 9, weight: .medium, design: .rounded)).foregroundStyle(.secondary)
+                        GeometryReader { geo in
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(WDS.positive)
+                                .frame(width: geo.size.width * CGFloat(Double(d.totalAssets) / Double(maxV)), height: 6)
+                        }.frame(height: 6)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Debt").font(.system(size: 9, weight: .medium, design: .rounded)).foregroundStyle(.secondary)
+                        GeometryReader { geo in
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(WDS.danger)
+                                .frame(width: geo.size.width * CGFloat(Double(abs(d.totalLiabilities)) / Double(maxV)), height: 6)
+                        }.frame(height: 6)
+                    }
+                }
+            }
+
+            Spacer(minLength: 6)
 
             HStack {
                 Text("\(d.accountCount) accounts")
-                    .font(.caption2)
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
-            }
-
-            // Last updated
-            HStack {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 8))
-                    .foregroundStyle(.tertiary)
+                Spacer()
                 Text(d.lastUpdated, style: .relative)
-                    .font(.system(size: 8))
+                    .font(.system(size: 9, design: .rounded))
                     .foregroundStyle(.tertiary)
             }
         }
-        .padding()
+        .padding(16)
     }
 
-    private func mediumNetWorth(d: WidgetSharedData, sym: String) -> some View {
-        HStack(spacing: 16) {
-            // Left: headline
-            VStack(alignment: .leading, spacing: 6) {
-                Label("Net Worth", systemImage: "building.columns.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    // ── Medium: Full layout with bars ──
+    private func mediumNW(_ d: WidgetSharedData, _ s: String) -> some View {
+        let positive = d.netWorth >= 0
 
-                Text(formatCentsFull(d.netWorth, symbol: sym))
-                    .font(.system(size: 26, weight: .bold, design: .rounded))
-                    .foregroundStyle(d.netWorth >= 0 ? brandColor : .red)
-                    .minimumScaleFactor(0.6)
+        return HStack(spacing: 0) {
+            // Left: Hero
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 5) {
+                    Image(systemName: "building.columns.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(WDS.accent)
+                    Text("NET WORTH")
+                        .font(.system(size: 10, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 6)
+
+                Text(moneyFull(d.netWorth, s))
+                    .font(.system(size: 30, weight: .heavy, design: .rounded).monospacedDigit())
+                    .foregroundStyle(positive ? WDS.accent : WDS.danger)
+                    .minimumScaleFactor(0.5)
                     .lineLimit(1)
 
-                Spacer()
+                Spacer(minLength: 6)
 
-                HStack {
+                HStack(spacing: 3) {
                     Image(systemName: "arrow.triangle.2.circlepath")
                         .font(.system(size: 8))
                     Text(d.lastUpdated, style: .relative)
-                        .font(.system(size: 8))
+                        .font(.system(size: 9, design: .rounded))
                 }
                 .foregroundStyle(.tertiary)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            Divider()
+            Rectangle()
+                .fill(.quaternary)
+                .frame(width: 0.5)
+                .padding(.vertical, 10)
+                .padding(.horizontal, 12)
 
-            // Right: breakdown
+            // Right: Breakdown
             VStack(alignment: .leading, spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Assets")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                    Text(formatCents(d.totalAssets, symbol: sym))
-                        .font(.caption.bold())
-                        .foregroundStyle(.green)
+                // Assets
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 4) {
+                        RoundedRectangle(cornerRadius: 2).fill(WDS.positive).frame(width: 3, height: 14)
+                        Text("Assets").font(.system(size: 10, weight: .medium, design: .rounded)).foregroundStyle(.secondary)
+                    }
+                    Text(money(d.totalAssets, s))
+                        .font(.system(size: 18, weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(WDS.positive)
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Liabilities")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                    Text(formatCents(d.totalLiabilities, symbol: sym))
-                        .font(.caption.bold())
-                        .foregroundStyle(.red)
+
+                // Liabilities
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 4) {
+                        RoundedRectangle(cornerRadius: 2).fill(WDS.danger).frame(width: 3, height: 14)
+                        Text("Liabilities").font(.system(size: 10, weight: .medium, design: .rounded)).foregroundStyle(.secondary)
+                    }
+                    Text(money(d.totalLiabilities, s))
+                        .font(.system(size: 18, weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(WDS.danger)
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Accounts")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                    Text("\(d.accountCount)")
-                        .font(.caption.bold())
-                }
+
+                Text("\(d.accountCount) accounts")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding()
+        .padding(16)
     }
 
-    private func accessoryRectangularNetWorth(d: WidgetSharedData, sym: String) -> some View {
+    private func rectNW(_ d: WidgetSharedData, _ s: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
-                Image(systemName: "building.columns.fill")
-                    .font(.system(size: 10))
-                Text("Net Worth")
-                    .font(.caption2)
-            }
-            .foregroundStyle(.secondary)
-
-            Text(formatCentsFull(d.netWorth, symbol: sym))
-                .font(.system(size: 16, weight: .bold, design: .rounded))
-                .minimumScaleFactor(0.6)
-
+            Label("Net Worth", systemImage: "building.columns.fill")
+                .font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary)
+            Text(moneyFull(d.netWorth, s))
+                .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
             Text("\(d.accountCount) accounts")
-                .font(.system(size: 9))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
         }
     }
 }
 
 struct NetWorthWidget: Widget {
     let kind = "NetWorthWidget"
-
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: BalanceTimelineProvider()) { entry in
             NetWorthWidgetView(entry: entry)
                 .containerBackground(.fill.tertiary, for: .widget)
-                .widgetURL(WidgetDeepLink.netWorth)
+                .widgetURL(DL.net)
         }
         .configurationDisplayName("Net Worth")
         .description("Your total net worth at a glance.")
@@ -1215,63 +1358,63 @@ struct NetWorthWidget: Widget {
 // ============================================================
 
 #if DEBUG
-#Preview("Today Spending - Small", as: .systemSmall) {
+#Preview("Today - Small", as: .systemSmall) {
     TodaySpendingWidget()
-} timeline: {
-    BalanceTimelineEntry(date: Date(), data: .sample)
-}
+} timeline: { BalanceTimelineEntry(date: .now, data: .sample) }
+
+#Preview("Today - Medium", as: .systemMedium) {
+    TodaySpendingWidget()
+} timeline: { BalanceTimelineEntry(date: .now, data: .sample) }
+
+#Preview("Budget - Small", as: .systemSmall) {
+    BudgetWidget()
+} timeline: { BalanceTimelineEntry(date: .now, data: .sample) }
 
 #Preview("Budget - Medium", as: .systemMedium) {
     BudgetWidget()
-} timeline: {
-    BalanceTimelineEntry(date: Date(), data: .sample)
-}
+} timeline: { BalanceTimelineEntry(date: .now, data: .sample) }
 
 #Preview("Budget - Large", as: .systemLarge) {
     BudgetWidget()
-} timeline: {
-    BalanceTimelineEntry(date: Date(), data: .sample)
-}
+} timeline: { BalanceTimelineEntry(date: .now, data: .sample) }
 
-#Preview("Safe to Spend - Small", as: .systemSmall) {
+#Preview("Safe - Small", as: .systemSmall) {
     SafeToSpendWidget()
-} timeline: {
-    BalanceTimelineEntry(date: Date(), data: .sample)
-}
+} timeline: { BalanceTimelineEntry(date: .now, data: .sample) }
+
+#Preview("Safe - Medium", as: .systemMedium) {
+    SafeToSpendWidget()
+} timeline: { BalanceTimelineEntry(date: .now, data: .sample) }
+
+#Preview("Bills - Small", as: .systemSmall) {
+    UpcomingBillsWidget()
+} timeline: { BalanceTimelineEntry(date: .now, data: .sample) }
 
 #Preview("Bills - Medium", as: .systemMedium) {
     UpcomingBillsWidget()
-} timeline: {
-    BalanceTimelineEntry(date: Date(), data: .sample)
-}
+} timeline: { BalanceTimelineEntry(date: .now, data: .sample) }
+
+#Preview("Net Worth - Small", as: .systemSmall) {
+    NetWorthWidget()
+} timeline: { BalanceTimelineEntry(date: .now, data: .sample) }
 
 #Preview("Net Worth - Medium", as: .systemMedium) {
     NetWorthWidget()
-} timeline: {
-    BalanceTimelineEntry(date: Date(), data: .sample)
-}
+} timeline: { BalanceTimelineEntry(date: .now, data: .sample) }
 
-#Preview("Empty State - Small", as: .systemSmall) {
+#Preview("Empty", as: .systemSmall) {
     BudgetWidget()
-} timeline: {
-    BalanceTimelineEntry(date: Date(), data: .empty)
-}
+} timeline: { BalanceTimelineEntry(date: .now, data: .empty) }
 
-#Preview("Budget - Lock Screen", as: .accessoryCircular) {
+#Preview("Lock - Budget", as: .accessoryCircular) {
     BudgetWidget()
-} timeline: {
-    BalanceTimelineEntry(date: Date(), data: .sample)
-}
+} timeline: { BalanceTimelineEntry(date: .now, data: .sample) }
 
-#Preview("Safe - Lock Rect", as: .accessoryRectangular) {
+#Preview("Lock - Safe Rect", as: .accessoryRectangular) {
     SafeToSpendWidget()
-} timeline: {
-    BalanceTimelineEntry(date: Date(), data: .sample)
-}
+} timeline: { BalanceTimelineEntry(date: .now, data: .sample) }
 
-#Preview("Today - Inline", as: .accessoryInline) {
+#Preview("Lock - Inline", as: .accessoryInline) {
     TodaySpendingWidget()
-} timeline: {
-    BalanceTimelineEntry(date: Date(), data: .sample)
-}
+} timeline: { BalanceTimelineEntry(date: .now, data: .sample) }
 #endif

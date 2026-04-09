@@ -49,9 +49,21 @@ class SupabaseManager: ObservableObject {
             preconditionFailure("Supabase configuration missing or invalid — cannot start app. See Security/SECURITY.md.")
         }
 
+        // Opt into the new Supabase Auth behaviour (PR #822): always
+        // emit the locally-stored session as the initial session, even
+        // when the cached token is expired. Consumers must then guard on
+        // `session.isExpired` themselves — AuthManager does this.
+        // Silences the SDK's "Initial session emitted after attempting
+        // to refresh…" warning and prevents surprising auth flips on
+        // cold-start when the refresh token is stale.
         client = SupabaseClient(
             supabaseURL: supabaseURL,
-            supabaseKey: config.supabaseAnonKey
+            supabaseKey: config.supabaseAnonKey,
+            options: SupabaseClientOptions(
+                auth: SupabaseClientOptions.AuthOptions(
+                    emitLocalSessionAsInitialSession: true
+                )
+            )
         )
 
         SecureLogger.info("Supabase client initialized [\(config.environment.rawValue)]")

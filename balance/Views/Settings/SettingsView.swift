@@ -14,6 +14,8 @@ struct SettingsView: View {
     @Environment(\.colorScheme) private var colorScheme
     @StateObject private var appLockManager = AppLockManager.shared
     @State private var showPaywall = false
+    @State private var showDeleteAccountConfirm = false
+    @State private var showDeleteAccountFinal = false
 
     
     var body: some View {
@@ -394,6 +396,58 @@ struct SettingsView: View {
                         }
                     }
                     
+                    // Danger Zone
+                    DS.Card(padding: 14) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 10) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 18))
+                                    .foregroundStyle(DS.Colors.danger)
+
+                                Text("Danger Zone")
+                                    .font(DS.Typography.section)
+                                    .foregroundStyle(DS.Colors.danger)
+                            }
+
+                            Divider().foregroundStyle(DS.Colors.grid)
+
+                            Button(role: .destructive) {
+                                Haptics.warning()
+                                showDeleteAccountConfirm = true
+                            } label: {
+                                HStack(spacing: 12) {
+                                    ZStack {
+                                        Circle()
+                                            .fill(DS.Colors.danger.opacity(0.15))
+                                            .frame(width: 36, height: 36)
+
+                                        Image(systemName: "person.crop.circle.badge.minus")
+                                            .font(.system(size: 16))
+                                            .foregroundStyle(DS.Colors.danger)
+                                    }
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Delete Account")
+                                            .font(.system(size: 14, weight: .medium))
+                                            .foregroundStyle(DS.Colors.danger)
+
+                                        Text("Permanently remove all your data")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(DS.Colors.subtext)
+                                    }
+
+                                    Spacer()
+
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(DS.Colors.subtext)
+                                }
+                                .padding(.vertical, 4)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 16)
@@ -405,6 +459,33 @@ struct SettingsView: View {
             .sheet(isPresented: $showPaywall) {
                 // Paywall removed
                 EmptyView()
+            }
+            // Step 1: "Are you sure?"
+            .alert("Delete Account?", isPresented: $showDeleteAccountConfirm) {
+                Button("Cancel", role: .cancel) {}
+                Button("Continue", role: .destructive) {
+                    showDeleteAccountFinal = true
+                }
+            } message: {
+                Text("This will permanently delete your account and all associated data. This action cannot be undone.")
+            }
+            // Step 2: Final confirmation
+            .alert("This is irreversible", isPresented: $showDeleteAccountFinal) {
+                Button("Cancel", role: .cancel) {}
+                Button("Delete Everything", role: .destructive) {
+                    // TODO: Implement actual account deletion once the new
+                    // database is in place. This should:
+                    // 1. Delete all user data from Supabase (transactions,
+                    //    budgets, categories, recurring, user profile row)
+                    // 2. Call supabase.client.auth.admin.deleteUser or an
+                    //    RPC that handles cascade deletion server-side
+                    // 3. Clear local UserDefaults + keychain
+                    // 4. Sign out and reset to launch screen
+                    SecureLogger.info("Delete account requested — not yet implemented (database migration pending)")
+                    Haptics.error()
+                }
+            } message: {
+                Text("Are you absolutely sure? All transactions, budgets, goals, and account data will be permanently erased.")
             }
     }
 
