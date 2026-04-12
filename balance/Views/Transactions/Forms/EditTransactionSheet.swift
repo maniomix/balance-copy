@@ -339,6 +339,18 @@ struct EditTransactionSheet: View {
         case .noChange:
             dismiss()  // transaction was already gone — just close
         case .savedLocally:
+            // Phase 7: Learn from category corrections
+            if oldTransaction.category != category && !oldTransaction.note.isEmpty {
+                AIMerchantMemory.shared.learnCorrection(
+                    merchantNote: oldTransaction.note,
+                    correctCategory: category.storageKey
+                )
+                AIMemoryStore.shared.recordCorrection(
+                    merchant: oldTransaction.note,
+                    fromCategory: oldTransaction.category.storageKey,
+                    toCategory: category.storageKey
+                )
+            }
             // Transaction record is durably saved. Balance/goal delta side-effects are
             // still in flight (async) — haptic + dismiss reflects the save, not full settlement.
             Haptics.success()

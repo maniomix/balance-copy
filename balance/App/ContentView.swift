@@ -20,6 +20,7 @@ struct ContentView: View {
     @EnvironmentObject private var supabaseManager: SupabaseManager
     @EnvironmentObject private var appLockManager: AppLockManager
     @StateObject private var onboardingManager = OnboardingManager.shared
+    @AppStorage("ai.onboarding.completed") private var hasCompletedAIOnboarding = false
     @StateObject private var syncCoordinator = SyncCoordinator.shared
     @Environment(\.scenePhase) private var scenePhase
 
@@ -29,6 +30,9 @@ struct ContentView: View {
 
     @AppStorage("notifications.enabled")
     private var notificationsEnabled: Bool = false
+
+    // AI
+    @State private var showAIChat = false
 
     private let notifEvalDebounceSeconds: TimeInterval = 0.9
     
@@ -54,6 +58,10 @@ struct ContentView: View {
             showCorruptDataAlert = true
         }
         SecureLogger.info("Local data loaded: \(store.transactions.count) transactions")
+
+        // Train AI systems from existing data
+        AICategorySuggester.shared.learnFromHistory(store: store)
+        AIUserPreferences.shared.learnFromTransactions(store: store)
 
         // Defense-in-depth: drop orphan split expenses left by prior bypass-delete bugs.
         HouseholdManager.shared.sweepOrphanSplitExpenses(
@@ -114,12 +122,23 @@ struct ContentView: View {
                                 showLaunchScreen = false
                             }
                             .transition(.opacity)
+                        } else if !hasCompletedAIOnboarding &&
+                                  !onboardingManager.hasCompletedOnboarding {
+                            // Phase 10: AI-native onboarding (replaces old welcome/tutorial)
+                            AIOnboardingView(
+                                store: $store,
+                                userId: authManager.currentUser?.uid ?? "",
+                                onComplete: {
+                                    onboardingManager.completeOnboarding()
+                                }
+                            )
+                            .transition(.opacity)
                         } else if !onboardingManager.hasCompletedOnboarding && !onboardingManager.showOnboarding {
-                            // ✅ Welcome screen
+                            // Fallback: old Welcome screen (shouldn't reach here normally)
                             WelcomeView(onboardingManager: onboardingManager)
                                 .transition(.opacity)
                         } else if onboardingManager.showOnboarding {
-                            // ✅ Tutorial کارتی
+                            // Tutorial (replay from settings)
                             SimpleTutorialView(onboardingManager: onboardingManager)
                                 .transition(.opacity)
                         } else {
@@ -130,6 +149,7 @@ struct ContentView: View {
                     .animation(.easeInOut(duration: 0.4), value: showLaunchScreen)
                     .animation(.easeInOut(duration: 0.4), value: onboardingManager.hasCompletedOnboarding)
                     .animation(.easeInOut(duration: 0.4), value: onboardingManager.showOnboarding)
+                    .animation(.easeInOut(duration: 0.4), value: hasCompletedAIOnboarding)
                     .onAppear {
                         // Load data when app appears (app startup)
                         loadUserData()
@@ -228,6 +248,11 @@ struct ContentView: View {
                     _ = await (f, s, r)
                     // Update widget data after engines finish
                     await WidgetDataWriter.update(store: newStore)
+
+                    // Refresh AI insights + rescue mode + proactive items
+                    AIInsightEngine.shared.refresh(store: newStore)
+                    AIBudgetRescue.shared.evaluate(store: newStore)
+                    AIProactiveEngine.shared.refresh(store: newStore)
                 }
             }
             // Save locally when the app is backgrounded
@@ -377,6 +402,31 @@ struct ContentView: View {
                 //     RecurringTransactionManager.processRecurringTransactions(store: &store)
                 // }
             }
+            .sheet(isPresented: $showAIChat) {
+                AIChatView(store: $store)
+            }
+
+                // Floating AI button (bottom-trailing)
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button {
+                            Haptics.medium()
+                            showAIChat = true
+                        } label: {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 52, height: 52)
+                                .background(DS.Colors.accent, in: Circle())
+                                .shadow(color: DS.Colors.accent.opacity(0.4), radius: 8, y: 4)
+                        }
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 90) // above tab bar
+                    }
+                }
+                .ignoresSafeArea(.keyboard)
         }
     }
 }

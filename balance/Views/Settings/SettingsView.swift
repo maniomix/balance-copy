@@ -1,5 +1,6 @@
 import SwiftUI
 import LocalAuthentication
+import UniformTypeIdentifiers
 
 // MARK: - Settings
 
@@ -13,7 +14,12 @@ struct SettingsView: View {
    
     @Environment(\.colorScheme) private var colorScheme
     @StateObject private var appLockManager = AppLockManager.shared
+    @StateObject private var trustManager = AITrustManager.shared
     @State private var showPaywall = false
+    @State private var showAIActivity = false
+    @State private var showDownloadConfirm = false
+    @State private var showModelImporter = false
+    @State private var showModelInfo = false
     @State private var showDeleteAccountConfirm = false
     @State private var showDeleteAccountFinal = false
 
@@ -192,6 +198,191 @@ struct SettingsView: View {
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    // ── AI Model ──
+                    DS.Card {
+                        VStack(alignment: .leading, spacing: 10) {
+                            // Header row with status inline
+                            HStack(spacing: 8) {
+                                Image(systemName: "cpu.fill")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(DS.Colors.accent)
+                                Text("AI Model")
+                                    .font(DS.Typography.section)
+                                    .foregroundStyle(DS.Colors.text)
+
+                                Spacer()
+
+                                // Status pill (inline in header)
+                                HStack(spacing: 5) {
+                                    Circle()
+                                        .fill(AIManager.shared.status == .ready ? DS.Colors.positive : DS.Colors.warning)
+                                        .frame(width: 6, height: 6)
+                                    Text(aiModelStatusText)
+                                        .font(.caption.weight(.medium))
+                                        .foregroundStyle(DS.Colors.text)
+                                    if let size = AIManager.shared.modelFileSize {
+                                        Text("·")
+                                            .font(.caption)
+                                            .foregroundStyle(DS.Colors.subtext)
+                                        Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                                            .font(.caption)
+                                            .foregroundStyle(DS.Colors.subtext)
+                                    }
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule()
+                                        .fill((AIManager.shared.status == .ready ? DS.Colors.positive : DS.Colors.warning).opacity(0.1))
+                                )
+
+                                // Info button
+                                Button {
+                                    showModelInfo = true
+                                } label: {
+                                    Image(systemName: "questionmark.circle")
+                                        .font(.system(size: 15))
+                                        .foregroundStyle(DS.Colors.subtext)
+                                }
+                            }
+
+                            // Download / Load / Delete
+                            aiModelButtons
+                        }
+                    }
+
+                    // ── AI Notifications ──
+                    DS.Card {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "bell.badge.fill")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(DS.Colors.accent)
+                                Text("AI Notifications")
+                                    .font(DS.Typography.section)
+                                    .foregroundStyle(DS.Colors.text)
+                            }
+
+                            Toggle(isOn: Binding(
+                                get: { AIInsightEngine.shared.isMorningNotificationEnabled },
+                                set: { AIInsightEngine.shared.isMorningNotificationEnabled = $0 }
+                            )) {
+                                Label("Morning Briefing (8 AM)", systemImage: "sunrise.fill")
+                                    .font(DS.Typography.body)
+                                    .foregroundStyle(DS.Colors.text)
+                            }
+                            .tint(DS.Colors.accent)
+
+                            Toggle(isOn: Binding(
+                                get: { AIInsightEngine.shared.isWeeklyReviewEnabled },
+                                set: { AIInsightEngine.shared.isWeeklyReviewEnabled = $0 }
+                            )) {
+                                Label("Weekly Review (Sun 7 PM)", systemImage: "calendar.badge.clock")
+                                    .font(DS.Typography.body)
+                                    .foregroundStyle(DS.Colors.text)
+                            }
+                            .tint(DS.Colors.accent)
+
+                            Divider().foregroundStyle(DS.Colors.grid)
+
+                            Button {
+                                showAIActivity = true
+                            } label: {
+                                HStack {
+                                    Label("AI Activity Dashboard", systemImage: "clock.arrow.circlepath")
+                                        .font(DS.Typography.body)
+                                        .foregroundStyle(DS.Colors.text)
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundStyle(DS.Colors.subtext)
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Trust Levels ──
+                    DS.Card {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "shield.checkered")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(DS.Colors.accent)
+                                Text("Action Trust Levels")
+                                    .font(DS.Typography.section)
+                                    .foregroundStyle(DS.Colors.text)
+                            }
+
+                            Text("Control which AI actions run automatically.")
+                                .font(.caption)
+                                .foregroundStyle(DS.Colors.subtext)
+
+                            // ── Auto-allow toggles ──
+                            Text("Allow auto-execution")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(DS.Colors.subtext)
+                                .textCase(.uppercase)
+                                .padding(.top, 4)
+
+                            trustPreferenceToggle(
+                                "Auto-categorize transactions",
+                                icon: "tag.fill",
+                                binding: trustPrefBinding(\.allowAutoCategorizaton)
+                            )
+                            trustPreferenceToggle(
+                                "Auto-tag notes & labels",
+                                icon: "text.badge.checkmark",
+                                binding: trustPrefBinding(\.allowAutoTagging)
+                            )
+                            trustPreferenceToggle(
+                                "Auto-clean merchant names",
+                                icon: "sparkles",
+                                binding: trustPrefBinding(\.allowAutoMerchantCleanup)
+                            )
+
+                            // ── Confirm-require toggles ──
+                            Text("Require confirmation")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(DS.Colors.subtext)
+                                .textCase(.uppercase)
+                                .padding(.top, 8)
+
+                            trustPreferenceToggle(
+                                "Confirm budget changes",
+                                icon: "chart.pie.fill",
+                                binding: trustPrefBinding(\.requireConfirmBudgetChanges)
+                            )
+                            trustPreferenceToggle(
+                                "Confirm recurring setup",
+                                icon: "repeat",
+                                binding: trustPrefBinding(\.requireConfirmRecurringSetup)
+                            )
+                            trustPreferenceToggle(
+                                "Confirm goal changes",
+                                icon: "target",
+                                binding: trustPrefBinding(\.requireConfirmGoalChanges)
+                            )
+
+                            // ── Safety toggles ──
+                            Text("Safety")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(DS.Colors.subtext)
+                                .textCase(.uppercase)
+                                .padding(.top, 8)
+
+                            trustPreferenceToggle(
+                                "Block destructive actions",
+                                icon: "xmark.shield.fill",
+                                binding: trustPrefBinding(\.neverAutoDestructive)
+                            )
+                            trustPreferenceToggle(
+                                "Block large auto-amounts",
+                                icon: "dollarsign.circle.fill",
+                                binding: trustPrefBinding(\.neverAutoLargeAmounts)
+                            )
                         }
                     }
 
@@ -460,6 +651,45 @@ struct SettingsView: View {
                 // Paywall removed
                 EmptyView()
             }
+            .sheet(isPresented: $showAIActivity) {
+                AIActivityDashboard(store: $store)
+            }
+            .alert("About AI Model", isPresented: $showModelInfo) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Balance uses Gemma 4 E2B, a compact on-device AI model (~3 GB). All processing happens locally on your device — your financial data never leaves your phone.\n\nFor a more powerful AI experience with larger models, try Balance on macOS.")
+            }
+            .alert("Download AI Model?", isPresented: $showDownloadConfirm) {
+                Button("Download (\(AIManager.modelDownloadSizeLabel))", role: .none) {
+                    AIManager.shared.downloadModel()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This will download the AI model (\(AIManager.modelDownloadSizeLabel)). Make sure you're connected to Wi-Fi.")
+            }
+            .fileImporter(
+                isPresented: $showModelImporter,
+                allowedContentTypes: [.data],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    guard url.lastPathComponent.hasSuffix(".gguf") else { return }
+                    Task {
+                        let accessing = url.startAccessingSecurityScopedResource()
+                        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+                        do {
+                            try AIManager.shared.importModel(from: url)
+                            AIManager.shared.loadModel()
+                        } catch {
+                            SecureLogger.error("Model import failed: \(error)")
+                        }
+                    }
+                case .failure(let error):
+                    SecureLogger.error("File picker failed: \(error)")
+                }
+            }
             // Step 1: "Are you sure?"
             .alert("Delete Account?", isPresented: $showDeleteAccountConfirm) {
                 Button("Cancel", role: .cancel) {}
@@ -496,7 +726,116 @@ struct SettingsView: View {
     private var userInitial: String {
         authManager.userInitial
     }
-    
+
+    // MARK: - AI Model Buttons
+
+    @ViewBuilder
+    private var aiModelButtons: some View {
+        if case .downloading(let progress, let bytes) = AIManager.shared.status {
+            VStack(spacing: 8) {
+                ProgressView(value: progress)
+                    .tint(DS.Colors.accent)
+                HStack {
+                    Text("\(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) / \(AIManager.modelDownloadSizeLabel) · \(Int(progress * 100))%")
+                        .font(.caption)
+                        .foregroundStyle(DS.Colors.subtext)
+                        .contentTransition(.numericText())
+                    Spacer()
+                    Button("Cancel") { AIManager.shared.cancelDownload() }
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(DS.Colors.danger)
+                }
+            }
+        } else if !AIManager.shared.isModelDownloaded {
+            VStack(spacing: 8) {
+                Button {
+                    showDownloadConfirm = true
+                } label: {
+                    Label("Download Model (\(AIManager.modelDownloadSizeLabel))", systemImage: "arrow.down.circle.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                        .background(DS.Colors.accent, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                Button {
+                    showModelImporter = true
+                } label: {
+                    Label("Import from Files", systemImage: "folder.fill")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(DS.Colors.accent)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(DS.Colors.accent.opacity(0.3), lineWidth: 1)
+                        )
+                }
+            }
+        } else {
+            VStack(spacing: 8) {
+                if AIManager.shared.status != .ready {
+                    Button {
+                        AIManager.shared.loadModel()
+                    } label: {
+                        Label("Load Model", systemImage: "play.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 9)
+                            .background(DS.Colors.accent, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                    .disabled(AIManager.shared.status == .loading)
+                }
+                Button {
+                    AIManager.shared.deleteModel()
+                } label: {
+                    Label("Delete Model", systemImage: "trash")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(DS.Colors.danger)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(DS.Colors.danger.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func trustPreferenceToggle(_ title: String, icon: String, binding: Binding<Bool>) -> some View {
+        HStack {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundStyle(DS.Colors.accent)
+                .frame(width: 20)
+            Text(title)
+                .font(DS.Typography.body)
+                .foregroundStyle(DS.Colors.text)
+            Spacer()
+            Toggle("", isOn: binding)
+                .tint(DS.Colors.accent)
+                .labelsHidden()
+        }
+    }
+
+    private func trustPrefBinding(_ keyPath: WritableKeyPath<AIUserTrustPreferences, Bool>) -> Binding<Bool> {
+        Binding(
+            get: { trustManager.preferences[keyPath: keyPath] },
+            set: { trustManager.preferences[keyPath: keyPath] = $0 }
+        )
+    }
+
+    private var aiModelStatusText: String {
+        switch AIManager.shared.status {
+        case .notLoaded: return AIManager.shared.isModelDownloaded ? "Not Loaded" : "Not Downloaded"
+        case .loading: return "Loading..."
+        case .ready: return "Gemma 4 Ready"
+        case .error(let msg): return "Error: \(msg)"
+        case .generating: return "Generating..."
+        case .downloading(let p, _): return "Downloading \(Int(p * 100))%"
+        }
+    }
+
     // Helper for support rows
     private func supportRow(icon: String, title: String, subtitle: String, iconColor: Int) -> some View {
         HStack(spacing: 12) {

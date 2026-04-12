@@ -15,6 +15,8 @@ struct InsightsView: View {
 
     @State private var shareURL: URL? = nil
     @State private var showReportExport = false
+    @State private var showAIChat = false
+    @StateObject private var insightEngine = AIInsightEngine.shared
 
     private struct TrendPoint: Identifiable {
         let id: Int          // day of month
@@ -46,8 +48,33 @@ struct InsightsView: View {
                             }
                         }
                     } else {
-                        // ✅ AI Financial Advisor (بالای بالا!)
-                        // AIAdvisorCard(store: $store)  // ← COMMENTED OUT - فعلاً نیاز نیست
+                        // AI Financial Advisor
+                        if !insightEngine.insights.isEmpty {
+                            DS.Card {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "sparkles")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundStyle(DS.Colors.accent)
+                                        Text("AI Insights")
+                                            .font(DS.Typography.section)
+                                            .foregroundStyle(DS.Colors.text)
+                                        Spacer()
+                                        Button { showAIChat = true } label: {
+                                            Text("Ask AI")
+                                                .font(DS.Typography.caption)
+                                                .foregroundStyle(DS.Colors.accent)
+                                        }
+                                    }
+
+                                    ForEach(insightEngine.insights.prefix(5)) { insight in
+                                        AIInsightBanner(insight: insight) { action in
+                                            showAIChat = true
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
                         DS.Card {
                             VStack(alignment: .leading, spacing: 10) {
@@ -412,6 +439,8 @@ struct InsightsView: View {
                         await Notifications.syncAll(store: store)
                     }
                 }
+
+                insightEngine.refresh(store: store)
             }
             .onChange(of: store) { _, _ in
                 // Re-evaluate smart rules as data changes (budget/transactions/etc.).
@@ -430,6 +459,9 @@ struct InsightsView: View {
                 ReportExportView(store: $store)
             }
             .sheet(isPresented: $showPaywall) {
+            }
+            .sheet(isPresented: $showAIChat) {
+                AIChatView(store: $store)
             }
         }
     }

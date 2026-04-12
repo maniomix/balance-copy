@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		3C012F3F2F88352500C85A79 /* LlamaSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 3C012F3E2F88352500C85A79 /* LlamaSwift */; };
 		3C76B0222F13150400223717 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = 3C76B0212F13150400223717 /* ZIPFoundation */; };
 		3C9094682F2D6DE5002C123F /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 3C9094672F2D6DE5002C123F /* GoogleSignIn */; };
 		3C90946A2F2D6DE5002C123F /* GoogleSignInSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 3C9094692F2D6DE5002C123F /* GoogleSignInSwift */; };
@@ -115,6 +116,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3C012F3F2F88352500C85A79 /* LlamaSwift in Frameworks */,
 				3CB0A4622F43BF8D008FD90A /* Functions in Frameworks */,
 				3C76B0222F13150400223717 /* ZIPFoundation in Frameworks */,
 				3CB0A4642F43BF8D008FD90A /* PostgREST in Frameworks */,
@@ -208,6 +210,7 @@
 				3CB0A4652F43BF8D008FD90A /* Realtime */,
 				3CB0A4672F43BF8D008FD90A /* Storage */,
 				3CB0A4692F43BF8D008FD90A /* Supabase */,
+				3C012F3E2F88352500C85A79 /* LlamaSwift */,
 			);
 			productName = balance;
 			productReference = 3C4B992D2F047DB8003DAE43 /* balance.app */;
@@ -293,6 +296,7 @@
 				3C76B0202F13150400223717 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
 				3C9094662F2D6DE5002C123F /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 				3CB0A45E2F43BF8D008FD90A /* XCRemoteSwiftPackageReference "supabase-swift" */,
+				3C012F3D2F88352500C85A79 /* XCRemoteSwiftPackageReference "llama" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3C4B992E2F047DB8003DAE43 /* Products */;
@@ -731,6 +735,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		3C012F3D2F88352500C85A79 /* XCRemoteSwiftPackageReference "llama" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/mattt/llama.swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.8728.0;
+			};
+		};
 		3C76B0202F13150400223717 /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/weichsel/ZIPFoundation";
@@ -758,6 +770,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		3C012F3E2F88352500C85A79 /* LlamaSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3C012F3D2F88352500C85A79 /* XCRemoteSwiftPackageReference "llama" */;
+			productName = LlamaSwift;
+		};
 		3C76B0212F13150400223717 /* ZIPFoundation */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 3C76B0202F13150400223717 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;

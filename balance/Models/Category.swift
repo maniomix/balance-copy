@@ -83,6 +83,28 @@ enum Category: Hashable, Codable {
         }
     }
 
+    /// Create a Category from its storageKey (e.g. "dining", "custom:Coffee").
+    /// Returns nil for unknown keys.
+    init?(storageKey: String) {
+        if storageKey.hasPrefix("custom:") {
+            let name = String(storageKey.dropFirst(7))
+            self = .custom(name)
+            return
+        }
+        switch storageKey {
+        case "groceries": self = .groceries
+        case "rent": self = .rent
+        case "bills": self = .bills
+        case "transport": self = .transport
+        case "health": self = .health
+        case "education": self = .education
+        case "dining": self = .dining
+        case "shopping": self = .shopping
+        case "other": self = .other
+        default: return nil
+        }
+    }
+
     // MARK: - Codable
     private enum CodingKeys: String, CodingKey { case type, value }
     private enum Kind: String, Codable { case system, custom }

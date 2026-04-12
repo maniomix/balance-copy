@@ -30,6 +30,9 @@ class SupabaseManager: ObservableObject {
     /// Auth state — delegates to AuthManager as single source of truth.
     var currentUser: User? { AuthManager.shared.currentUser }
 
+    /// Convenience: current user's UUID as a string, or nil if not authenticated.
+    var currentUserId: String? { currentUser?.id.uuidString }
+
     init() {
         setupClient()
     }

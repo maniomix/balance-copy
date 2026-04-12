@@ -52,6 +52,13 @@ struct DashboardView: View {
     @State private var healthScore: HealthScoreEngine.HealthScore?
     @State private var actionCards: [ActionCard] = []
 
+    // AI
+    @State private var showAIChat = false
+    @State private var showProactiveFeed = false
+    @StateObject private var insightEngine = AIInsightEngine.shared
+    @StateObject private var budgetRescue = AIBudgetRescue.shared
+    @StateObject private var proactiveEngine = AIProactiveEngine.shared
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -144,6 +151,83 @@ struct DashboardView: View {
                         // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                         // SECTION: AI Advisor
                         // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        VStack(spacing: 12) {
+                            DS.SectionHeader(title: "AI Advisor", icon: "sparkles")
+
+                            // Budget Rescue Mode
+                            if let plan = budgetRescue.plan, plan.isActive {
+                                DS.Card {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: "exclamationmark.triangle.fill")
+                                                .foregroundStyle(plan.budgetUsedPercent >= 100 ? DS.Colors.danger : DS.Colors.warning)
+                                            Text("Budget Rescue")
+                                                .font(DS.Typography.callout)
+                                                .fontWeight(.semibold)
+                                                .foregroundStyle(DS.Colors.text)
+                                            Spacer()
+                                            Text("\(plan.budgetUsedPercent)% used")
+                                                .font(DS.Typography.caption)
+                                                .foregroundStyle(plan.budgetUsedPercent >= 100 ? DS.Colors.danger : DS.Colors.warning)
+                                        }
+
+                                        ForEach(plan.tips, id: \.self) { tip in
+                                            Text("• \(tip)")
+                                                .font(DS.Typography.caption)
+                                                .foregroundStyle(DS.Colors.subtext)
+                                        }
+
+                                        if !plan.reductionTargets.isEmpty {
+                                            Divider().foregroundStyle(DS.Colors.grid)
+                                            ForEach(plan.reductionTargets) { target in
+                                                HStack {
+                                                    Text(target.category)
+                                                        .font(DS.Typography.caption)
+                                                        .foregroundStyle(DS.Colors.text)
+                                                    Spacer()
+                                                    Text("Save \(String(format: "$%.0f", Double(target.savingsIfReduced) / 100.0))")
+                                                        .font(DS.Typography.caption)
+                                                        .foregroundStyle(DS.Colors.positive)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // ── Proactive AI items (Phase 6) ──
+                            AIProactiveBanner(store: $store,
+                                              onOpenFeed: { showProactiveFeed = true },
+                                              onOpenChat: { showAIChat = true })
+
+                            // Morning briefing (legacy — kept as fallback if proactive briefing is dismissed)
+                            if proactiveEngine.morningBriefing == nil,
+                               let briefing = insightEngine.morningBriefing {
+                                AIInsightBanner(insight: briefing)
+                            }
+
+                            // AI insight row
+                            if !insightEngine.insights.isEmpty {
+                                AIInsightRow(insights: insightEngine.insights) { action in
+                                    showAIChat = true
+                                }
+                            }
+
+                            // Ask AI button
+                            Button { showAIChat = true } label: {
+                                HStack {
+                                    Image(systemName: "sparkles")
+                                        .font(.system(size: 14, weight: .semibold))
+                                    Text("Ask Centmond AI")
+                                        .font(DS.Typography.callout)
+                                }
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(DS.Colors.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            }
+                        }
+
                         advisorInsightsCard
                     }
                 }
@@ -216,6 +300,23 @@ struct DashboardView: View {
 
                 // Compute copilot features after engines are ready
                 computeCopilotData()
+
+                // Refresh AI insights + rescue mode + proactive items
+                insightEngine.refresh(store: store)
+                budgetRescue.evaluate(store: store)
+                proactiveEngine.clearStaleDismissals()
+                proactiveEngine.refresh(store: store)
+            }
+        }
+        .onChange(of: store.selectedMonth) { _, _ in
+            // Recompute everything when user switches months
+            Task {
+                async let f: () = ForecastEngine.shared.generate(store: store)
+                async let s: () = SubscriptionEngine.shared.analyze(store: store)
+                _ = await (f, s)
+                computeCopilotData()
+                insightEngine.refresh(store: store)
+                budgetRescue.evaluate(store: store)
             }
         }
         .alert("Delete This Month", isPresented: $showDeleteMonthConfirm) {
@@ -255,6 +356,12 @@ struct DashboardView: View {
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showPaywall) {
+        }
+        .sheet(isPresented: $showAIChat) {
+            AIChatView(store: $store)
+        }
+        .sheet(isPresented: $showProactiveFeed) {
+            AIProactiveView(store: $store)
         }
     }
 
@@ -428,9 +535,9 @@ struct DashboardView: View {
 
                 Spacer()
 
-                // Transaction count pill
+                // Transaction count pill (current month only)
                 if !subscriptionManager.isPro {
-                    let currentCount = store.transactions.count
+                    let currentCount = Analytics.monthTransactions(store: store).count
                     let freeLimit = 50
                     Button {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
@@ -580,7 +687,7 @@ struct DashboardView: View {
 
     // MARK: - Free Plan Bubble
     private var freePlanBubble: some View {
-        let currentCount = store.transactions.count
+        let currentCount = Analytics.monthTransactions(store: store).count
         let freeLimit = 50
         let usage = Double(currentCount) / Double(freeLimit)
         let barColor: Color = usage > 0.8 ? DS.Colors.warning : DS.Colors.accent
@@ -1026,8 +1133,9 @@ struct DashboardView: View {
         var body: some View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 4) {
-                    Text(category.icon)
+                    Image(systemName: category.icon)
                         .font(.system(size: 14))
+                        .foregroundStyle(category.tint)
                     Text(category.title)
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .foregroundStyle(DS.Colors.text)
@@ -1062,8 +1170,9 @@ struct DashboardView: View {
         var body: some View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 4) {
-                    Text(category.icon)
+                    Image(systemName: category.icon)
                         .font(.system(size: 14))
+                        .foregroundStyle(category.tint)
                     Text(category.title)
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .foregroundStyle(DS.Colors.text)
