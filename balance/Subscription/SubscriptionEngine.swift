@@ -40,111 +40,398 @@ class SubscriptionEngine: ObservableObject {
     @Published var yearlyTotal: Int = 0
     @Published var activeCount: Int = 0
 
-    // Persisted subscription status overrides (keyed by normalized merchant name)
-    private static let statusOverridesKey = "subscriptions.status_overrides"
+    /// Single durable container. Replaces the three legacy UserDefaults
+    /// keys. `analyze()` merges into `snapshot.records` rather than
+    /// rebuilding the in-memory list, so user edits survive re-detection.
+    private var snapshot: SubscriptionStoreSnapshot = SubscriptionStoreSnapshot()
 
-    private var statusOverrides: [String: String] = [:] {
-        didSet { saveStatusOverrides() }
+    /// Read-only window onto manual records. Kept for the few call sites
+    /// that want "user-added subs only" without filtering themselves.
+    var manualSubscriptions: [DetectedSubscription] {
+        snapshot.records.filter { $0.source == .manual }
+    }
+
+    /// All hidden subscription records — exposed so the upcoming Phase 4
+    /// "Hidden" section can render them.
+    var hiddenSubscriptions: [DetectedSubscription] {
+        snapshot.records.filter { snapshot.hiddenKeys.contains($0.merchantKey) }
     }
 
     private init() {
-        loadStatusOverrides()
+        if let migrated = SubscriptionStorePersistence.migrateLegacyIfPresent() {
+            snapshot = migrated
+        } else if let loaded = SubscriptionStorePersistence.load() {
+            snapshot = loaded
+        }
     }
 
-    private func loadStatusOverrides() {
-        statusOverrides = UserDefaults.standard.dictionary(forKey: Self.statusOverridesKey) as? [String: String] ?? [:]
+    private func saveSnapshot() {
+        SubscriptionStorePersistence.save(snapshot)
     }
 
-    private func saveStatusOverrides() {
-        UserDefaults.standard.set(statusOverrides, forKey: Self.statusOverridesKey)
+    // MARK: - Manual Add / Remove
+
+    @discardableResult
+    func addManualSubscription(
+        merchantName: String,
+        category: Category,
+        amountCents: Int,
+        billingCycle: BillingCycle,
+        nextRenewalDate: Date?,
+        notes: String = ""
+    ) -> DetectedSubscription {
+        let key = DetectedSubscription.merchantKey(for: merchantName)
+
+        // If a record already exists for this merchant key, treat the manual
+        // add as an upgrade-in-place: flip source to .manual, fill in the
+        // user-supplied amount/cycle/category, unhide.
+        if let idx = snapshot.records.firstIndex(where: { $0.merchantKey == key }) {
+            snapshot.records[idx].source = .manual
+            snapshot.records[idx].merchantName = merchantName
+            snapshot.records[idx].category = category
+            snapshot.records[idx].expectedAmount = amountCents
+            snapshot.records[idx].lastAmount = amountCents
+            snapshot.records[idx].billingCycle = billingCycle
+            snapshot.records[idx].nextRenewalDate = nextRenewalDate
+            snapshot.records[idx].notes = notes
+            snapshot.records[idx].status = .active
+            snapshot.records[idx].userEditedStatus = true
+            snapshot.records[idx].updatedAt = Date()
+            snapshot.hiddenKeys.remove(key)
+            saveSnapshot()
+            republish()
+            return snapshot.records[idx]
+        }
+
+        let sub = DetectedSubscription(
+            merchantName: merchantName,
+            merchantKey: key,
+            category: category,
+            expectedAmount: amountCents,
+            lastAmount: amountCents,
+            billingCycle: billingCycle,
+            nextRenewalDate: nextRenewalDate,
+            lastChargeDate: nil,
+            status: .active,
+            source: .manual,
+            linkedTransactionIds: [],
+            notes: notes,
+            userEditedStatus: true,
+            isAutoDetected: false,
+            confidenceScore: 1.0,
+            chargeHistory: []
+        )
+        snapshot.records.append(sub)
+        saveSnapshot()
+        republish()
+        return sub
+    }
+
+    func removeManualSubscription(_ sub: DetectedSubscription) {
+        snapshot.records.removeAll { $0.id == sub.id }
+        saveSnapshot()
+        republish()
     }
 
     // MARK: - Main Analysis
 
-    /// Analyze transactions to detect and update subscriptions.
-    /// Merges auto-detected subscriptions with manually-managed ones.
+    /// Detect subscriptions from transactions and merge the result into the
+    /// durable `snapshot.records`. Existing records are updated in place
+    /// (charge history, last/next dates, confidence) while user-edited
+    /// fields (status when `userEditedStatus`, notes, manual category) are
+    /// preserved. Recurring-transaction-sourced records are reconciled too:
+    /// orphaned ones (no longer in `store.recurringTransactions`) get
+    /// pruned unless the user has edited them.
     func analyze(store: Store) async {
         isLoading = true
 
         let transactions = store.transactions
-        let existing = subscriptions.filter { !$0.isAutoDetected }
 
         let result = await Task.detached(priority: .userInitiated) {
-            Self.detect(transactions: transactions, existingManual: existing)
+            Self.detect(transactions: transactions, existingManual: [])
         }.value
 
-        // Apply persisted status overrides to re-detected subscriptions.
-        // Uses normalizeMerchant() for key consistency with detection grouping.
-        var subs = result.subscriptions
-        for i in subs.indices {
-            let merchantKey = Self.normalizeMerchant(subs[i].merchantName)
-            if let overrideRaw = statusOverrides[merchantKey],
-               let override = SubscriptionStatus(rawValue: overrideRaw) {
-                subs[i].status = override
+        let recurringCandidates = Self.recurringCandidates(from: store.recurringTransactions)
+
+        mergeDetected(result.subscriptions)
+        mergeRecurring(recurringCandidates)
+        consumeLegacyStatusOverrides()
+
+        self.insights = computeGlobalInsights()
+        self.lastAnalyzedAt = Date()
+        saveSnapshot()
+        republish()
+        self.isLoading = false
+    }
+
+    /// Re-derive the global insight list from the post-merge snapshot.
+    /// Detection's `globalInsights` only sees auto-detected candidates;
+    /// running this after merge means user-paused / hidden / manual rows
+    /// are factored in correctly.
+    private func computeGlobalInsights() -> [SubscriptionInsight] {
+        let visible = snapshot.records.filter { !snapshot.hiddenKeys.contains($0.merchantKey) }
+        var out: [SubscriptionInsight] = []
+
+        if visible.contains(where: { $0.hasPriceIncrease && $0.status == .active }) {
+            out.append(.priceIncreased)
+        }
+        if visible.contains(where: { sub in
+            guard sub.status == .active, let d = sub.daysUntilRenewal else { return false }
+            return d >= 0 && d <= 7
+        }) {
+            out.append(.upcomingRenewal)
+        }
+        if visible.contains(where: { $0.status == .suspectedUnused }) {
+            out.append(.maybeUnused)
+        }
+        if visible.contains(where: { $0.hasMissedCharge }) {
+            out.append(.missedCharge)
+        }
+
+        // Duplicate risk: same category + similar name OR similar amount.
+        let active = visible.filter { $0.status == .active }
+        outer: for i in 0..<active.count {
+            for j in (i+1)..<active.count where active[i].category == active[j].category {
+                let diff = abs(active[i].expectedAmount - active[j].expectedAmount)
+                // Phase 3: amount band tightened 40% → 20%. Pairs with the
+                // stricter token-set name match in `merchantNamesSimilar`.
+                let threshold = max(active[i].expectedAmount, active[j].expectedAmount) / 5
+                if diff <= threshold || Self.merchantNamesSimilar(active[i].merchantName, active[j].merchantName) {
+                    out.append(.duplicateRisk)
+                    break outer
+                }
             }
         }
 
-        // Merge recurring transactions as subscriptions.
-        // Use normalizeMerchant() for both sides to ensure consistent dedup.
-        let existingNormalized = Set(subs.map { Self.normalizeMerchant($0.merchantName) })
-        let recurringAsSubs = Self.convertRecurringToSubscriptions(store.recurringTransactions, existingNormalizedNames: existingNormalized)
-        subs.append(contentsOf: recurringAsSubs)
+        if visible.contains(where: { $0.chargeHistory.count <= 3 && $0.isAutoDetected && $0.status == .active }) {
+            out.append(.newlyDetected)
+        }
+        return out
+    }
 
-        self.subscriptions = subs
-        self.insights = result.globalInsights
-        self.monthlyTotal = subs
-            .filter { $0.status == .active }
-            .reduce(0) { $0 + $1.monthlyCost }
-        self.yearlyTotal = subs
-            .filter { $0.status == .active }
-            .reduce(0) { $0 + $1.yearlyCost }
-        self.activeCount = subs.filter { $0.status == .active }.count
-        self.lastAnalyzedAt = Date()
-        self.isLoading = false
+    // MARK: - Merge
+
+    /// Apply detected candidates to the durable snapshot. New keys insert
+    /// fresh `.detected` records; existing keys update charge history /
+    /// dates / confidence while preserving user edits.
+    private func mergeDetected(_ candidates: [DetectedSubscription]) {
+        for candidate in candidates {
+            let key = candidate.merchantKey.isEmpty
+                ? DetectedSubscription.merchantKey(for: candidate.merchantName)
+                : candidate.merchantKey
+            if let idx = snapshot.records.firstIndex(where: { $0.merchantKey == key }) {
+                applyDetectedUpdate(candidate, into: &snapshot.records[idx])
+            } else {
+                var record = candidate
+                record.merchantKey = key
+                record.source = .detected
+                snapshot.records.append(record)
+            }
+        }
+    }
+
+    /// Merge logic for detected candidates onto an existing record.
+    /// Detection-derived fields (charge history, dates, confidence,
+    /// linked tx ids, last amount) are refreshed every analyze.
+    /// User-controlled fields are preserved.
+    private func applyDetectedUpdate(_ candidate: DetectedSubscription, into existing: inout DetectedSubscription) {
+        // If a new charge has landed since we last looked, clear any
+        // "still using it" dismissal — the user actually IS using it,
+        // and we want suspectedUnused to be able to fire again later if
+        // they go idle for two cycles in a row.
+        if let newLast = candidate.lastChargeDate,
+           let oldLast = existing.lastChargeDate,
+           newLast > oldLast {
+            existing.dismissedSuspectedUnused = false
+        }
+
+        existing.expectedAmount = candidate.expectedAmount
+        existing.lastAmount = candidate.lastAmount
+        existing.lastChargeDate = candidate.lastChargeDate
+        existing.confidenceScore = candidate.confidenceScore
+        existing.detectedIntervalDays = candidate.detectedIntervalDays
+        existing.linkedTransactionIds = candidate.linkedTransactionIds
+        existing.chargeHistory = candidate.chargeHistory
+        existing.detectionRationale = candidate.detectionRationale
+        // Renewal date: detection re-derives this each cycle. Honor it
+        // unless the user manually overrode the cycle (manual source).
+        if existing.source != .manual {
+            existing.nextRenewalDate = candidate.nextRenewalDate
+            existing.billingCycle = candidate.billingCycle
+        }
+        // Status: only auto-update when the user hasn't taken control.
+        // Also: respect the suspected-unused dismissal — if detection
+        // would have flagged it again, keep the prior status instead.
+        if !existing.userEditedStatus {
+            if candidate.status == .suspectedUnused && existing.dismissedSuspectedUnused {
+                existing.status = .active
+            } else {
+                existing.status = candidate.status
+            }
+        }
+        existing.updatedAt = Date()
+    }
+
+    /// Merge recurring-transaction-sourced candidates and prune orphans.
+    /// A record with `source == .recurring` whose merchantKey is no longer
+    /// present in the recurring set is removed (unless the user edited it,
+    /// in which case it gets promoted to `.manual` so the edits survive).
+    private func mergeRecurring(_ candidates: [DetectedSubscription]) {
+        let liveKeys = Set(candidates.map(\.merchantKey))
+
+        // Promote / prune existing .recurring rows.
+        var i = 0
+        while i < snapshot.records.count {
+            let r = snapshot.records[i]
+            if r.source == .recurring && !liveKeys.contains(r.merchantKey) {
+                if r.userEditedStatus || !r.notes.isEmpty {
+                    snapshot.records[i].source = .manual
+                    i += 1
+                } else {
+                    snapshot.records.remove(at: i)
+                    continue
+                }
+            }
+            i += 1
+        }
+
+        // Insert / update from candidates.
+        for candidate in candidates {
+            if let idx = snapshot.records.firstIndex(where: { $0.merchantKey == candidate.merchantKey }) {
+                // Already covered by detection or prior recurring — keep
+                // the existing row; just refresh dates if recurring is
+                // the only source.
+                if snapshot.records[idx].source == .recurring {
+                    snapshot.records[idx].nextRenewalDate = candidate.nextRenewalDate
+                    snapshot.records[idx].lastChargeDate = candidate.lastChargeDate
+                    snapshot.records[idx].expectedAmount = candidate.expectedAmount
+                    if !snapshot.records[idx].userEditedStatus {
+                        snapshot.records[idx].status = .active
+                    }
+                    snapshot.records[idx].updatedAt = Date()
+                }
+            } else {
+                snapshot.records.append(candidate)
+            }
+        }
+    }
+
+    /// One-shot drain of pre-rebuild `statusOverrides` carried in via
+    /// migration. Each entry only fires once a matching record exists.
+    private func consumeLegacyStatusOverrides() {
+        guard !snapshot.legacyStatusOverridesByKey.isEmpty else { return }
+        for (key, raw) in snapshot.legacyStatusOverridesByKey {
+            guard let status = SubscriptionStatus(rawValue: raw) else {
+                snapshot.legacyStatusOverridesByKey.removeValue(forKey: key)
+                continue
+            }
+            if let idx = snapshot.records.firstIndex(where: { $0.merchantKey == key }) {
+                snapshot.records[idx].status = status
+                snapshot.records[idx].userEditedStatus = true
+                snapshot.records[idx].updatedAt = Date()
+                snapshot.legacyStatusOverridesByKey.removeValue(forKey: key)
+            }
+        }
+    }
+
+    /// Push the latest filtered records to `@Published subscriptions` and
+    /// refresh totals. `republish()` is the only place that touches the
+    /// published list — every mutation goes through it.
+    private func republish() {
+        let visible = snapshot.records.filter { !snapshot.hiddenKeys.contains($0.merchantKey) }
+        // Sort by monthly cost descending to match prior behavior.
+        self.subscriptions = visible.sorted { $0.monthlyCost > $1.monthlyCost }
+        recalcTotals()
     }
 
     // MARK: - Manual Actions
 
     func markAsCancelled(_ sub: DetectedSubscription) {
-        guard let idx = subscriptions.firstIndex(where: { $0.id == sub.id }) else { return }
-        subscriptions[idx].status = .cancelled
-        subscriptions[idx].updatedAt = Date()
-        persistStatus(for: subscriptions[idx])
-        recalcTotals()
+        setStatus(.cancelled, for: sub)
     }
 
     func markAsPaused(_ sub: DetectedSubscription) {
-        guard let idx = subscriptions.firstIndex(where: { $0.id == sub.id }) else { return }
-        subscriptions[idx].status = .paused
-        subscriptions[idx].updatedAt = Date()
-        persistStatus(for: subscriptions[idx])
-        recalcTotals()
+        setStatus(.paused, for: sub)
     }
 
+    /// Reactivate a subscription. Clears `userEditedStatus` so detection
+    /// can take over the status field again, and unhides the merchant.
     func markAsActive(_ sub: DetectedSubscription) {
-        guard let idx = subscriptions.firstIndex(where: { $0.id == sub.id }) else { return }
-        subscriptions[idx].status = .active
-        subscriptions[idx].updatedAt = Date()
-        // Remove override so auto-detection takes over again
-        let merchantKey = Self.normalizeMerchant(subscriptions[idx].merchantName)
-        statusOverrides.removeValue(forKey: merchantKey)
-        recalcTotals()
+        guard let idx = snapshot.records.firstIndex(where: { $0.id == sub.id }) else { return }
+        snapshot.records[idx].status = .active
+        snapshot.records[idx].userEditedStatus = false
+        snapshot.records[idx].updatedAt = Date()
+        snapshot.hiddenKeys.remove(snapshot.records[idx].merchantKey)
+        saveSnapshot()
+        republish()
     }
 
-    private func persistStatus(for sub: DetectedSubscription) {
-        let merchantKey = Self.normalizeMerchant(sub.merchantName)
-        statusOverrides[merchantKey] = sub.status.rawValue
+    /// Apply an explicit user status (cancelled/paused) and lock detection
+    /// out of overwriting it on the next analyze.
+    private func setStatus(_ status: SubscriptionStatus, for sub: DetectedSubscription) {
+        guard let idx = snapshot.records.firstIndex(where: { $0.id == sub.id }) else { return }
+        snapshot.records[idx].status = status
+        snapshot.records[idx].userEditedStatus = true
+        snapshot.records[idx].updatedAt = Date()
+        saveSnapshot()
+        republish()
     }
 
     func updateNotes(_ sub: DetectedSubscription, notes: String) {
-        guard let idx = subscriptions.firstIndex(where: { $0.id == sub.id }) else { return }
-        subscriptions[idx].notes = notes
-        subscriptions[idx].updatedAt = Date()
+        guard let idx = snapshot.records.firstIndex(where: { $0.id == sub.id }) else { return }
+        snapshot.records[idx].notes = notes
+        snapshot.records[idx].updatedAt = Date()
+        saveSnapshot()
+        republish()
     }
 
+    /// Hide a subscription. The record stays in `snapshot.records` so the
+    /// upcoming Hidden section can render and unhide it; the merchant key
+    /// goes into `hiddenKeys` so re-detection won't surface it again.
     func removeSubscription(_ sub: DetectedSubscription) {
-        subscriptions.removeAll { $0.id == sub.id }
-        recalcTotals()
+        guard let idx = snapshot.records.firstIndex(where: { $0.id == sub.id }) else { return }
+        let key = snapshot.records[idx].merchantKey
+        snapshot.hiddenKeys.insert(key)
+        saveSnapshot()
+        republish()
+    }
+
+    /// Unhide a previously-hidden subscription. Used by the Hidden section
+    /// in the upcoming UI rebuild; safe to call now.
+    func unhideSubscription(_ sub: DetectedSubscription) {
+        snapshot.hiddenKeys.remove(sub.merchantKey)
+        saveSnapshot()
+        republish()
+    }
+
+    /// Phase 5a — write an edited record back into the snapshot by id.
+    /// Used by the unified Add/Edit sheet when the user saves changes
+    /// from the detail view. Recomputes `merchantKey` from the (possibly
+    /// new) `merchantName` so the merge logic still finds the row.
+    /// Bumps `updatedAt` so the UI refreshes; no re-detection needed.
+    func updateSubscription(_ sub: DetectedSubscription) {
+        guard let idx = snapshot.records.firstIndex(where: { $0.id == sub.id }) else { return }
+        var updated = sub
+        updated.merchantKey = DetectedSubscription.merchantKey(for: sub.merchantName)
+        updated.updatedAt = Date()
+        snapshot.records[idx] = updated
+        saveSnapshot()
+        republish()
+    }
+
+    /// User confirms they're still using a subscription that detection
+    /// flagged as "Maybe Unused". Flips the record back to `.active` and
+    /// remembers the dismissal so re-detection can't re-flag it until a
+    /// new charge clears the flag (handled in `applyDetectedUpdate`).
+    func dismissSuspectedUnused(_ sub: DetectedSubscription) {
+        guard let idx = snapshot.records.firstIndex(where: { $0.id == sub.id }) else { return }
+        snapshot.records[idx].dismissedSuspectedUnused = true
+        if snapshot.records[idx].status == .suspectedUnused {
+            snapshot.records[idx].status = .active
+        }
+        snapshot.records[idx].updatedAt = Date()
+        saveSnapshot()
+        republish()
     }
 
     private func recalcTotals() {
@@ -157,16 +444,17 @@ class SubscriptionEngine: ObservableObject {
         activeCount = subscriptions.filter { $0.status == .active }.count
     }
 
-    // MARK: - Recurring → Subscription Conversion
+    // MARK: - Recurring → Subscription Candidates
 
-    /// Convert active RecurringTransactions into DetectedSubscriptions,
-    /// skipping any that already exist (by normalized merchant name match).
-    static func convertRecurringToSubscriptions(_ recurring: [RecurringTransaction], existingNormalizedNames: Set<String>) -> [DetectedSubscription] {
+    /// Build subscription candidates from active RecurringTransactions.
+    /// Returned with `source = .recurring` and a stable `merchantKey`.
+    /// `mergeRecurring` handles dedup against detected/manual records and
+    /// prunes orphans whose recurring transaction was deleted.
+    static func recurringCandidates(from recurring: [RecurringTransaction]) -> [DetectedSubscription] {
         recurring.compactMap { rt in
             guard rt.isActive else { return nil }
-            // Use the same normalization as detection grouping to prevent duplicates
-            let key = normalizeMerchant(rt.name)
-            guard !key.isEmpty, !existingNormalizedNames.contains(key) else { return nil }
+            let key = DetectedSubscription.merchantKey(for: rt.name)
+            guard !key.isEmpty else { return nil }
 
             let cycle: BillingCycle = {
                 switch rt.frequency {
@@ -180,6 +468,7 @@ class SubscriptionEngine: ObservableObject {
             return DetectedSubscription(
                 id: rt.id,
                 merchantName: rt.name,
+                merchantKey: key,
                 category: rt.category,
                 expectedAmount: rt.amount,
                 lastAmount: rt.amount,
@@ -187,6 +476,7 @@ class SubscriptionEngine: ObservableObject {
                 nextRenewalDate: rt.nextOccurrence(),
                 lastChargeDate: rt.lastProcessedDate,
                 status: .active,
+                source: .recurring,
                 linkedTransactionIds: [],
                 notes: rt.note,
                 isAutoDetected: false,
@@ -228,9 +518,9 @@ class SubscriptionEngine: ObservableObject {
             $0.category == sub.category
         }
         for other in sameCategory {
-            // Check amount similarity (within 40%)
+            // Check amount similarity (within 20% — tightened in Phase 3)
             let diff = abs(other.expectedAmount - sub.expectedAmount)
-            let threshold = max(sub.expectedAmount, other.expectedAmount) * 2 / 5 // 40%
+            let threshold = max(sub.expectedAmount, other.expectedAmount) / 5
             let amountSimilar = diff <= threshold
 
             // Check name similarity
@@ -289,18 +579,41 @@ class SubscriptionEngine: ObservableObject {
         )
     }
 
-    /// Check if two merchant names are likely the same service
+    /// Check whether two merchant names likely refer to the same service.
+    ///
+    /// Phase 3 — replaces the old prefix-and-contains heuristic with a
+    /// token-set Jaccard ratio. Names are normalized via `merchantKey`
+    /// (the same canonicalization the rest of the engine uses), split into
+    /// tokens, and compared as sets. Single-token names short-circuit on
+    /// equality. The 0.6 threshold drops false positives like
+    /// "Apple One" / "Apple Music" (Jaccard ≈ 0.33) while still catching
+    /// "Spotify" / "Spotify Premium" (Jaccard ≈ 0.5 → handled by the
+    /// subset rule below) and "Adobe Creative Cloud" / "Adobe Cloud"
+    /// (Jaccard ≈ 0.67).
     nonisolated static func merchantNamesSimilar(_ a: String, _ b: String) -> Bool {
-        let na = a.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        let nb = b.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        if na == nb { return true }
-        // Check if one contains the other (e.g. "spotify" in "spotify premium")
-        if na.contains(nb) || nb.contains(na) { return true }
-        // Check first word match (e.g. "netflix" == "netflix hd")
-        let aFirst = na.split(separator: " ").first.map(String.init) ?? na
-        let bFirst = nb.split(separator: " ").first.map(String.init) ?? nb
-        if aFirst == bFirst && aFirst.count >= 4 { return true }
-        return false
+        let ka = DetectedSubscription.merchantKey(for: a)
+        let kb = DetectedSubscription.merchantKey(for: b)
+        if ka.isEmpty || kb.isEmpty { return false }
+        if ka == kb { return true }
+
+        let ta = Set(ka.split(separator: " ").map(String.init))
+        let tb = Set(kb.split(separator: " ").map(String.init))
+        guard !ta.isEmpty, !tb.isEmpty else { return false }
+
+        // Subset rule: if every token of the shorter name appears in the
+        // longer one (and the shorter has ≥1 token of length ≥4), call it
+        // a match. Catches "spotify" ⊂ "spotify premium" without lowering
+        // the Jaccard threshold.
+        let smaller = ta.count <= tb.count ? ta : tb
+        let larger = ta.count <= tb.count ? tb : ta
+        if smaller.isSubset(of: larger), smaller.contains(where: { $0.count >= 4 }) {
+            return true
+        }
+
+        let intersection = ta.intersection(tb).count
+        let union = ta.union(tb).count
+        let jaccard = Double(intersection) / Double(max(1, union))
+        return jaccard >= 0.6
     }
 
     // MARK: - Pure Detection Logic (off main thread)
@@ -374,13 +687,24 @@ class SubscriptionEngine: ObservableObject {
 
             // ─── Step 2e: Compute confidence score ───
 
+            let occurrenceScore = min(1.0, Double(sorted.count) / 6.0)
+            let knownCycle: Double = billingCycle != .custom ? 1.0 : 0.0
             var confidence = 0.0
             confidence += regularityRatio * 0.4     // 40% from interval regularity
             confidence += amountSimilarity * 0.3    // 30% from amount consistency
-            confidence += min(1.0, Double(sorted.count) / 6.0) * 0.2  // 20% from occurrence count
-            confidence += (billingCycle != .custom ? 0.1 : 0.0) // 10% from recognized cycle
+            confidence += occurrenceScore * 0.2     // 20% from occurrence count
+            confidence += knownCycle * 0.1          // 10% from recognized cycle
 
             guard confidence >= 0.45 else { continue }
+
+            let rationale = DetectionRationale(
+                regularityRatio: regularityRatio,
+                amountSimilarity: amountSimilarity,
+                occurrenceScore: occurrenceScore,
+                knownCycle: knownCycle,
+                medianIntervalDays: medianInterval,
+                sampleCount: sorted.count
+            )
 
             // ─── Step 2f: Build subscription ───
 
@@ -416,7 +740,8 @@ class SubscriptionEngine: ObservableObject {
                 isAutoDetected: true,
                 confidenceScore: confidence,
                 chargeHistory: chargeHistory,
-                detectedIntervalDays: medianInterval
+                detectedIntervalDays: medianInterval,
+                detectionRationale: rationale
             )
 
             detected.append(sub)

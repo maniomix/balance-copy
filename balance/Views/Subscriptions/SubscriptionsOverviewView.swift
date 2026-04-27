@@ -5,11 +5,16 @@ import SwiftUI
 // ============================================================
 
 struct SubscriptionsOverviewView: View {
+    @Binding var store: Store
     @StateObject private var engine = SubscriptionEngine.shared
-    @State private var filterStatus: SubscriptionStatus? = nil
+    @State private var page: SubscriptionPage = .overview
     @State private var sortOption: SortOption = .cost
     @State private var selectedInsight: SubscriptionInsight? = nil
-    // Manual add navigates user to Recurring (in Transactions)
+    @State private var showAddSheet = false
+    /// Phase 4c — session-only dismissals for the Insights tab. Tapping
+    /// the X on a banner hides it for the rest of this view's lifetime;
+    /// it returns next launch (re-derived from the engine's insight set).
+    @State private var dismissedInsights: Set<SubscriptionInsight> = []
 
     enum SortOption: String, CaseIterable {
         case cost = "Cost"
@@ -17,20 +22,20 @@ struct SubscriptionsOverviewView: View {
         case name = "Name"
     }
 
-    private var filtered: [DetectedSubscription] {
-        var list = engine.subscriptions
-        if let status = filterStatus {
-            list = list.filter { $0.status == status }
+    /// Phase 4a — top-level page selector. Splits the old single scroll
+    /// view into three focused pages, accessed via a pill control under
+    /// the summary card. Matches the "don't overload a single chart"
+    /// pattern used in the InsightsView and Dashboard rebuilds.
+    enum SubscriptionPage: String, CaseIterable, Identifiable {
+        case overview, calendar, insights
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .overview: return "Overview"
+            case .calendar: return "Calendar"
+            case .insights: return "Insights"
+            }
         }
-        switch sortOption {
-        case .cost:
-            list.sort { $0.monthlyCost > $1.monthlyCost }
-        case .renewal:
-            list.sort { ($0.nextRenewalDate ?? .distantFuture) < ($1.nextRenewalDate ?? .distantFuture) }
-        case .name:
-            list.sort { $0.merchantName.localizedCaseInsensitiveCompare($1.merchantName) == .orderedAscending }
-        }
-        return list
     }
 
     var body: some View {
@@ -44,11 +49,8 @@ struct SubscriptionsOverviewView: View {
                     ScrollView {
                         VStack(spacing: 16) {
                             summaryCard
-                            manualAddHint
-                            insightBanners
-                            filterBar
-                            renewalCalendarSection
-                            subscriptionsList
+                            pageSelector
+                            pageContent
                         }
                         .padding(.vertical)
                     }
@@ -62,182 +64,265 @@ struct SubscriptionsOverviewView: View {
             .navigationTitle("Subscriptions")
             .navigationBarTitleDisplayMode(.large)
             .trackScreen("subscriptions")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Haptics.selection()
+                        showAddSheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+                    .accessibilityLabel("Add subscription")
+                }
+            }
+            .sheet(isPresented: $showAddSheet) {
+                AddSubscriptionSheet(store: $store)
+            }
         }
     }
 
-    // MARK: - Summary Card
+    // MARK: - Summary Card (Phase 4c — single accent strip)
 
+    /// Hero strip: one big monthly number in the accent color, with three
+    /// small stats underneath. Replaces the Phase 4a/b card whose four
+    /// status pills (positive/warning/purple/subtext) violated the
+    /// "one accent per card" rule and duplicated information now shown
+    /// natively by the sectioned list.
     private var summaryCard: some View {
         DS.Card {
-            VStack(spacing: 14) {
-                HStack(spacing: 0) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Monthly Cost")
-                            .font(DS.Typography.caption)
-                            .foregroundStyle(DS.Colors.subtext)
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Monthly Cost")
+                    .font(DS.Typography.caption)
+                    .foregroundStyle(DS.Colors.subtext)
 
-                        Text("\(DS.Format.currencySymbol())\(DS.Format.currency(engine.monthlyTotal))")
-                            .font(.system(size: 28, weight: .bold, design: .rounded))
-                            .foregroundStyle(DS.Colors.text)
-                    }
+                Text("\(DS.Format.currencySymbol())\(DS.Format.currency(engine.monthlyTotal))")
+                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .foregroundStyle(DS.Colors.accent)
 
-                    Spacer()
+                Divider().background(DS.Colors.grid.opacity(0.5))
 
-                    VStack(alignment: .trailing, spacing: 4) {
-                        Text("Yearly Cost")
-                            .font(DS.Typography.caption)
-                            .foregroundStyle(DS.Colors.subtext)
-
-                        Text("\(DS.Format.currencySymbol())\(DS.Format.currency(engine.yearlyTotal))")
-                            .font(.system(size: 18, weight: .semibold, design: .rounded))
-                            .foregroundStyle(DS.Colors.subtext)
-                    }
-                }
-
-                // Status pills
-                HStack(spacing: 10) {
-                    statusPill(
-                        count: engine.subscriptions.filter { $0.status == .active }.count,
+                HStack(alignment: .top, spacing: 0) {
+                    summaryStat(
+                        label: "Yearly",
+                        value: "\(DS.Format.currencySymbol())\(DS.Format.currency(engine.yearlyTotal))"
+                    )
+                    statSeparator
+                    summaryStat(
                         label: "Active",
-                        color: DS.Colors.positive
+                        value: "\(engine.activeCount)"
                     )
-                    statusPill(
-                        count: engine.subscriptions.filter { $0.status == .paused }.count,
-                        label: "Paused",
-                        color: DS.Colors.warning
+                    statSeparator
+                    summaryStat(
+                        label: "Next renewal",
+                        value: nextRenewalShortText
                     )
-                    statusPill(
-                        count: engine.subscriptions.filter { $0.status == .suspectedUnused }.count,
-                        label: "Unused?",
-                        color: Color(hexValue: 0x9B59B6)
-                    )
-                    statusPill(
-                        count: engine.subscriptions.filter { $0.status == .cancelled }.count,
-                        label: "Cancelled",
-                        color: DS.Colors.subtext
-                    )
-
-                    Spacer()
                 }
             }
         }
         .padding(.horizontal)
     }
 
-    private func statusPill(count: Int, label: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Text("\(count)")
-                .font(.system(size: 13, weight: .bold, design: .rounded))
-                .foregroundStyle(count > 0 ? color : DS.Colors.subtext.opacity(0.5))
+    private func summaryStat(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
             Text(label)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(DS.Colors.subtext)
+            Text(value)
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .foregroundStyle(DS.Colors.text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            (count > 0 ? color : DS.Colors.subtext).opacity(0.08),
-            in: Capsule()
-        )
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - Manual Add Hint
+    private var statSeparator: some View {
+        Rectangle()
+            .fill(DS.Colors.grid.opacity(0.4))
+            .frame(width: 1, height: 28)
+    }
 
-    private var manualAddHint: some View {
-        let isPro = SubscriptionManager.shared.isPro
+    /// Compact "in N days / today / —" for the next active renewal.
+    private var nextRenewalShortText: String {
+        guard let sub = engine.upcomingRenewals.first,
+              let days = sub.daysUntilRenewal else { return "—" }
+        if days < 0 { return "Overdue" }
+        if days == 0 { return "Today" }
+        if days == 1 { return "Tomorrow" }
+        return "In \(days)d"
+    }
 
-        return HStack(spacing: 10) {
-            Image(systemName: "plus.circle.fill")
-                .font(.system(size: 16))
-                .foregroundStyle(DS.Colors.accent)
+    // MARK: - Page Selector
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text("For adding Subscriptions manually :")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(DS.Colors.text)
-
-                if isPro {
-                    Text("Go to Transactions → Recurring to add custom subscriptions")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(DS.Colors.subtext)
-                } else {
-                    HStack(spacing: 4) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 9))
-                            .foregroundStyle(DS.Colors.positive)
-                        Text("Subscription Auto-detection is free")
-                            .foregroundStyle(DS.Colors.positive)
+    private var pageSelector: some View {
+        HStack(spacing: 6) {
+            ForEach(SubscriptionPage.allCases) { p in
+                Button {
+                    Haptics.selection()
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
+                        page = p
                     }
-                    .font(.system(size: 10, weight: .medium))
+                } label: {
+                    Text(p.label)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(page == p ? DS.Colors.text : DS.Colors.subtext)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            page == p ? DS.Colors.accent.opacity(0.15) : Color.clear,
+                            in: Capsule()
+                        )
+                        .overlay(
+                            Capsule().stroke(
+                                page == p ? DS.Colors.accent.opacity(0.3) : DS.Colors.grid.opacity(0.4),
+                                lineWidth: 1
+                            )
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Show \(p.label)")
+                .accessibilityAddTraits(page == p ? .isSelected : [])
+            }
+        }
+        .padding(.horizontal)
+    }
 
-                    HStack(spacing: 4) {
-                        Image(systemName: "lock.fill")
-                            .font(.system(size: 9))
-                            .foregroundStyle(DS.Colors.warning)
-                        Text("Manual entry requires Pro (via Recurring)")
+    // MARK: - Page Content
+
+    @ViewBuilder
+    private var pageContent: some View {
+        switch page {
+        case .overview:
+            sectionedList
+        case .calendar:
+            calendarPage
+        case .insights:
+            insightsPage
+        }
+    }
+
+    // MARK: - Calendar Page (Phase 4a)
+
+    /// Full-page upcoming-renewal list. Promoted from the old horizontal
+    /// scroller; the chronological list reads better as a vertical surface.
+    @ViewBuilder
+    private var calendarPage: some View {
+        let upcoming = engine.upcomingRenewals
+        if upcoming.isEmpty {
+            emptyPagePlaceholder(
+                icon: "calendar.badge.clock",
+                title: "No upcoming renewals",
+                message: "Active subscriptions with a known renewal date will appear here."
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Upcoming Renewals")
+                    .font(DS.Typography.section)
+                    .foregroundStyle(DS.Colors.text)
+                    .padding(.horizontal)
+
+                ForEach(upcoming) { sub in
+                    NavigationLink(destination: SubscriptionDetailView(subscription: sub, store: $store)) {
+                        renewalRow(sub)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func renewalRow(_ sub: DetectedSubscription) -> some View {
+        DS.Card {
+            HStack(spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(CategoryRegistry.shared.tint(for: sub.category).opacity(0.12))
+                        .frame(width: 42, height: 42)
+                    Image(systemName: CategoryRegistry.shared.icon(for: sub.category))
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(CategoryRegistry.shared.tint(for: sub.category))
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(sub.merchantName.capitalized)
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundStyle(DS.Colors.text)
+                        .lineLimit(1)
+                    if let date = sub.nextRenewalDate {
+                        Text(formatLongDate(date))
+                            .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(DS.Colors.subtext)
                     }
-                    .font(.system(size: 10, weight: .medium))
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("\(DS.Format.currencySymbol())\(DS.Format.currency(sub.expectedAmount))")
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .foregroundStyle(DS.Colors.text)
+                    if let days = sub.daysUntilRenewal {
+                        Text(days < 0 ? "\(abs(days))d overdue"
+                             : days == 0 ? "Today"
+                             : days == 1 ? "Tomorrow"
+                             : "In \(days) days")
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .foregroundStyle(days < 0 ? DS.Colors.danger
+                                             : days <= 3 ? DS.Colors.warning
+                                             : DS.Colors.subtext)
+                    }
                 }
             }
-
-            Spacer()
         }
-        .padding(12)
-        .background(DS.Colors.accent.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(DS.Colors.accent.opacity(0.15), lineWidth: 1)
-        )
         .padding(.horizontal)
+    }
+
+    // MARK: - Insights Page (Phase 4a)
+
+    @ViewBuilder
+    private var insightsPage: some View {
+        if visibleInsights.isEmpty {
+            emptyPagePlaceholder(
+                icon: "checkmark.seal.fill",
+                title: "All clear",
+                message: "No price hikes, missed charges, or unused subscriptions to flag right now."
+            )
+        } else {
+            insightBanners
+        }
+    }
+
+    private func emptyPagePlaceholder(icon: String, title: String, message: String) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 36))
+                .foregroundStyle(DS.Colors.subtext.opacity(0.5))
+            Text(title)
+                .font(DS.Typography.section)
+                .foregroundStyle(DS.Colors.text)
+            Text(message)
+                .font(DS.Typography.body)
+                .foregroundStyle(DS.Colors.subtext)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 32)
     }
 
     // MARK: - Insight Banners
 
+    /// Insight banners filtered against the session-only dismissal set.
+    /// Once every active insight has been dismissed the parent
+    /// `insightsPage` collapses to its "All clear" placeholder.
+    private var visibleInsights: [SubscriptionInsight] {
+        engine.insights.filter { !dismissedInsights.contains($0) }
+    }
+
     @ViewBuilder
     private var insightBanners: some View {
-        if !engine.insights.isEmpty {
+        if !visibleInsights.isEmpty {
             VStack(spacing: 8) {
-                ForEach(engine.insights) { insight in
-                    Button {
-                        Haptics.selection()
-                        selectedInsight = insight
-                    } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: insight.icon)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(insight.color)
-
-                            Text(insight.displayName)
-                                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                                .foregroundStyle(DS.Colors.text)
-
-                            if insightCount(for: insight) > 0 {
-                                Text("\(insightCount(for: insight))")
-                                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                                    .foregroundStyle(insight.color)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(insight.color.opacity(0.15), in: Capsule())
-                            }
-
-                            Spacer()
-
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(DS.Colors.subtext)
-                        }
-                        .padding(12)
-                        .background(
-                            insight.color.opacity(0.08),
-                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(insight.color.opacity(0.2), lineWidth: 1)
-                        )
-                    }
-                    .buttonStyle(.plain)
+                ForEach(visibleInsights) { insight in
+                    insightBanner(insight)
                 }
             }
             .padding(.horizontal)
@@ -245,6 +330,69 @@ struct SubscriptionsOverviewView: View {
                 InsightDetailSheet(insight: insight, engine: engine)
             }
         }
+    }
+
+    private func insightBanner(_ insight: SubscriptionInsight) -> some View {
+        // Two-button layout: tap the body to drill in, X to dismiss for
+        // this session. Don't wrap the whole row in a Button — that
+        // swallows the X tap.
+        HStack(spacing: 10) {
+            Button {
+                Haptics.selection()
+                selectedInsight = insight
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: insight.icon)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(insight.color)
+
+                    Text(insight.displayName)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(DS.Colors.text)
+
+                    if insightCount(for: insight) > 0 {
+                        Text("\(insightCount(for: insight))")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(insight.color)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(insight.color.opacity(0.15), in: Capsule())
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(DS.Colors.subtext)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                Haptics.selection()
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                    _ = dismissedInsights.insert(insight)
+                }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(DS.Colors.subtext)
+                    .frame(width: 22, height: 22)
+                    .background(DS.Colors.surface2, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss \(insight.displayName) banner")
+        }
+        .padding(12)
+        .background(
+            insight.color.opacity(0.08),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(insight.color.opacity(0.2), lineWidth: 1)
+        )
     }
 
     private func insightCount(for insight: SubscriptionInsight) -> Int {
@@ -256,141 +404,167 @@ struct SubscriptionsOverviewView: View {
         }
     }
 
-    // MARK: - Filter Bar
+    // MARK: - Sort Menu (Phase 4c)
 
-    private var filterBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                filterChip(label: "All", isSelected: filterStatus == nil) {
-                    withAnimation(.spring(response: 0.3)) { filterStatus = nil }
-                }
-                ForEach(SubscriptionStatus.allCases) { status in
-                    filterChip(label: status.displayName, isSelected: filterStatus == status) {
-                        withAnimation(.spring(response: 0.3)) {
-                            filterStatus = filterStatus == status ? nil : status
+    /// Inline sort control sitting at the top of the sectioned list.
+    /// Replaces the Phase 4b filter chip bar — sections cover the
+    /// "filter by status" need on their own, so the only knob worth
+    /// keeping is sort order.
+    private var sortMenu: some View {
+        HStack {
+            Spacer()
+            Menu {
+                ForEach(SortOption.allCases, id: \.self) { option in
+                    Button {
+                        sortOption = option
+                    } label: {
+                        if sortOption == option {
+                            Label(option.rawValue, systemImage: "checkmark")
+                        } else {
+                            Text(option.rawValue)
                         }
                     }
                 }
-
-                Spacer(minLength: 8)
-
-                // Sort menu
-                Menu {
-                    ForEach(SortOption.allCases, id: \.self) { option in
-                        Button {
-                            sortOption = option
-                        } label: {
-                            if sortOption == option {
-                                Label(option.rawValue, systemImage: "checkmark")
-                            } else {
-                                Text(option.rawValue)
-                            }
-                        }
-                    }
-                } label: {
+            } label: {
+                HStack(spacing: 5) {
                     Image(systemName: "arrow.up.arrow.down")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(DS.Colors.accent)
-                        .frame(width: 32, height: 32)
-                        .background(DS.Colors.accent.opacity(0.1), in: Circle())
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Sort: \(sortOption.rawValue)")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
                 }
-                .accessibilityLabel("Sort subscriptions")
+                .foregroundStyle(DS.Colors.subtext)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(DS.Colors.surface2, in: Capsule())
             }
-            .padding(.horizontal)
+            .accessibilityLabel("Sort subscriptions, currently \(sortOption.rawValue)")
         }
+        .padding(.horizontal)
     }
 
-    private func filterChip(label: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(isSelected ? DS.Colors.text : DS.Colors.subtext)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(
-                    isSelected ? DS.Colors.accent.opacity(0.15) : DS.Colors.surface2,
-                    in: Capsule()
-                )
-                .overlay(
-                    Capsule().stroke(
-                        isSelected ? DS.Colors.accent.opacity(0.3) : DS.Colors.grid.opacity(0.5),
-                        lineWidth: 1
-                    )
-                )
+    // MARK: - Sectioned List (Phase 4b)
+
+    /// Subscriptions split into status buckets. Suspected-unused records
+    /// stay inside Active — the row's inline status badge surfaces the
+    /// flag without fragmenting the list. Empty sections collapse.
+    private var sectionedList: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            sortMenu
+            sectionView(title: "Active", subs: activeSubs)
+            sectionView(title: "Trials", subs: trialSubs)
+            sectionView(title: "Paused", subs: pausedSubs)
+            sectionView(title: "Cancelled", subs: cancelledSubs)
+            sectionView(title: "Hidden", subs: hiddenSubs, isHiddenSection: true)
         }
     }
-
-    // MARK: - Renewal Calendar
 
     @ViewBuilder
-    private var renewalCalendarSection: some View {
-        let upcoming = engine.upcomingRenewals.prefix(5)
-        if !upcoming.isEmpty {
+    private func sectionView(title: String, subs: [DetectedSubscription], isHiddenSection: Bool = false) -> some View {
+        if !subs.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Upcoming Renewals")
-                    .font(DS.Typography.section)
-                    .foregroundStyle(DS.Colors.text)
-                    .padding(.horizontal)
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(Array(upcoming)) { sub in
-                            NavigationLink(destination: SubscriptionDetailView(subscription: sub)) {
-                                renewalCard(sub)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal)
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(DS.Typography.section)
+                        .foregroundStyle(DS.Colors.text)
+                    Text("\(subs.count)")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(DS.Colors.subtext)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(DS.Colors.surface2, in: Capsule())
                 }
-            }
-        }
-    }
-
-    private func renewalCard(_ sub: DetectedSubscription) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: sub.category.icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(sub.category.tint)
-
-                Text(sub.merchantName.capitalized)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(DS.Colors.text)
-                    .lineLimit(1)
-            }
-
-            Text("\(DS.Format.currencySymbol())\(DS.Format.currency(sub.expectedAmount))")
-                .font(.system(size: 16, weight: .bold, design: .rounded))
-                .foregroundStyle(DS.Colors.text)
-
-            if let days = sub.daysUntilRenewal {
-                Text(days < 0 ? "\(abs(days))d overdue" : days == 0 ? "Today" : days == 1 ? "Tomorrow" : "In \(days) days")
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(days < 0 ? DS.Colors.danger : days <= 3 ? DS.Colors.warning : DS.Colors.subtext)
-            }
-        }
-        .frame(width: 140, alignment: .leading)
-        .padding(12)
-        .background(DS.Colors.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        
-    }
-
-    // MARK: - Subscriptions List
-
-    private var subscriptionsList: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("All Subscriptions (\(filtered.count))")
-                .font(DS.Typography.section)
-                .foregroundStyle(DS.Colors.text)
                 .padding(.horizontal)
 
-            ForEach(filtered) { sub in
-                NavigationLink(destination: SubscriptionDetailView(subscription: sub)) {
-                    subscriptionRow(sub)
+                ForEach(subs) { sub in
+                    if isHiddenSection {
+                        hiddenRow(sub)
+                    } else {
+                        NavigationLink(destination: SubscriptionDetailView(subscription: sub, store: $store)) {
+                            subscriptionRow(sub)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Hidden-section row: shows the same content as a regular row but
+    /// swaps the chevron for an "Unhide" button, since tapping into the
+    /// detail view doesn't make sense for a hidden record.
+    private func hiddenRow(_ sub: DetectedSubscription) -> some View {
+        DS.Card {
+            HStack(spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(DS.Colors.subtext.opacity(0.12))
+                        .frame(width: 42, height: 42)
+                    Image(systemName: CategoryRegistry.shared.icon(for: sub.category))
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(DS.Colors.subtext)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(sub.merchantName.capitalized)
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundStyle(DS.Colors.text)
+                        .lineLimit(1)
+                    Text("\(DS.Format.currencySymbol())\(DS.Format.currency(sub.expectedAmount)) · \(sub.billingCycle.displayName)")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(DS.Colors.subtext)
+                }
+                Spacer()
+                Button {
+                    Haptics.selection()
+                    engine.unhideSubscription(sub)
+                } label: {
+                    Text("Unhide")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(DS.Colors.accent)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(DS.Colors.accent.opacity(0.12), in: Capsule())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Unhide \(sub.merchantName)")
             }
+        }
+        .padding(.horizontal)
+        .opacity(0.85)
+    }
+
+    // MARK: - Section bucketers
+
+    private var activeSubs: [DetectedSubscription] {
+        sortedFor(engine.subscriptions.filter {
+            ($0.status == .active || $0.status == .suspectedUnused) && !$0.isTrial
+        })
+    }
+
+    private var trialSubs: [DetectedSubscription] {
+        sortedFor(engine.subscriptions.filter { $0.isTrial })
+    }
+
+    private var pausedSubs: [DetectedSubscription] {
+        sortedFor(engine.subscriptions.filter { $0.status == .paused })
+    }
+
+    private var cancelledSubs: [DetectedSubscription] {
+        sortedFor(engine.subscriptions.filter { $0.status == .cancelled })
+    }
+
+    private var hiddenSubs: [DetectedSubscription] {
+        sortedFor(engine.hiddenSubscriptions)
+    }
+
+    /// Apply the current sort option to a subscription bucket.
+    private func sortedFor(_ list: [DetectedSubscription]) -> [DetectedSubscription] {
+        switch sortOption {
+        case .cost:
+            return list.sorted { $0.monthlyCost > $1.monthlyCost }
+        case .renewal:
+            return list.sorted { ($0.nextRenewalDate ?? .distantFuture) < ($1.nextRenewalDate ?? .distantFuture) }
+        case .name:
+            return list.sorted { $0.merchantName.localizedCaseInsensitiveCompare($1.merchantName) == .orderedAscending }
         }
     }
 
@@ -400,12 +574,12 @@ struct SubscriptionsOverviewView: View {
                 // Icon
                 ZStack {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(sub.category.tint.opacity(0.12))
+                        .fill(CategoryRegistry.shared.tint(for: sub.category).opacity(0.12))
                         .frame(width: 42, height: 42)
 
-                    Image(systemName: sub.category.icon)
+                    Image(systemName: CategoryRegistry.shared.icon(for: sub.category))
                         .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(sub.category.tint)
+                        .foregroundStyle(CategoryRegistry.shared.tint(for: sub.category))
                 }
 
                 // Info
@@ -421,6 +595,8 @@ struct SubscriptionsOverviewView: View {
                             Text(sub.status.displayName)
                                 .font(.system(size: 9, weight: .bold, design: .rounded))
                                 .foregroundStyle(sub.status.color)
+                                .lineLimit(1)
+                                .fixedSize()
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(sub.status.color.opacity(0.12), in: Capsule())
@@ -449,9 +625,11 @@ struct SubscriptionsOverviewView: View {
                                         .font(.system(size: 8))
                                     Text(insight.displayName)
                                         .font(.system(size: 9, weight: .semibold))
+                                        .lineLimit(1)
+                                        .fixedSize()
                                 }
                                 .foregroundStyle(insight.color)
-                                .padding(.horizontal, 5)
+                                .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(insight.color.opacity(0.1), in: Capsule())
                             }
@@ -516,6 +694,12 @@ struct SubscriptionsOverviewView: View {
     private func formatShortDate(_ date: Date) -> String {
         let fmt = DateFormatter()
         fmt.dateFormat = "MMM d"
+        return fmt.string(from: date)
+    }
+
+    private func formatLongDate(_ date: Date) -> String {
+        let fmt = DateFormatter()
+        fmt.dateStyle = .medium
         return fmt.string(from: date)
     }
 }
@@ -613,11 +797,11 @@ private struct InsightDetailSheet: View {
             HStack(spacing: 12) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(sub.category.tint.opacity(0.12))
+                        .fill(CategoryRegistry.shared.tint(for: sub.category).opacity(0.12))
                         .frame(width: 40, height: 40)
-                    Image(systemName: sub.category.icon)
+                    Image(systemName: CategoryRegistry.shared.icon(for: sub.category))
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(sub.category.tint)
+                        .foregroundStyle(CategoryRegistry.shared.tint(for: sub.category))
                 }
 
                 VStack(alignment: .leading, spacing: 3) {

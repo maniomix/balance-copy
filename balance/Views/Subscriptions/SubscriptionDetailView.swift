@@ -7,10 +7,27 @@ import Charts
 
 struct SubscriptionDetailView: View {
     let subscription: DetectedSubscription
+    @Binding var store: Store
     @StateObject private var engine = SubscriptionEngine.shared
     @Environment(\.dismiss) private var dismiss
     @State private var showCancelAlert = false
     @State private var showDeleteAlert = false
+    @State private var showEditSheet = false
+
+    /// Convenience init preserved so call sites that don't yet pass a
+    /// store binding keep working in previews. The binding is required
+    /// for the Edit sheet's category picker; AI/proactive callers that
+    /// open detail without a store get a no-op constant binding so the
+    /// Edit button still renders but the picker is empty.
+    init(subscription: DetectedSubscription, store: Binding<Store>) {
+        self.subscription = subscription
+        self._store = store
+    }
+
+    init(subscription: DetectedSubscription) {
+        self.subscription = subscription
+        self._store = .constant(Store())
+    }
 
     /// Live data from engine
     private var liveSub: DetectedSubscription {
@@ -36,6 +53,19 @@ struct SubscriptionDetailView: View {
         }
         .navigationTitle(liveSub.merchantName.capitalized)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Edit") {
+                    Haptics.selection()
+                    showEditSheet = true
+                }
+                .foregroundStyle(DS.Colors.accent)
+                .accessibilityLabel("Edit subscription")
+            }
+        }
+        .sheet(isPresented: $showEditSheet) {
+            AddSubscriptionSheet(store: $store, editing: liveSub)
+        }
         .alert("Cancel Subscription?", isPresented: $showCancelAlert) {
             Button("Keep Active", role: .cancel) {}
             Button("Mark Cancelled", role: .destructive) {
@@ -66,12 +96,12 @@ struct SubscriptionDetailView: View {
                     // Icon
                     ZStack {
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(liveSub.category.tint.opacity(0.15))
+                            .fill(CategoryRegistry.shared.tint(for: liveSub.category).opacity(0.15))
                             .frame(width: 56, height: 56)
 
-                        Image(systemName: liveSub.category.icon)
+                        Image(systemName: CategoryRegistry.shared.icon(for: liveSub.category))
                             .font(.system(size: 24, weight: .medium))
-                            .foregroundStyle(liveSub.category.tint)
+                            .foregroundStyle(CategoryRegistry.shared.tint(for: liveSub.category))
                     }
 
                     VStack(alignment: .leading, spacing: 4) {
@@ -203,14 +233,14 @@ struct SubscriptionDetailView: View {
                             x: .value("Date", charge.date),
                             y: .value("Amount", Double(charge.amount) / 100.0)
                         )
-                        .foregroundStyle(liveSub.category.tint)
+                        .foregroundStyle(CategoryRegistry.shared.tint(for: liveSub.category))
                         .interpolationMethod(.catmullRom)
 
                         PointMark(
                             x: .value("Date", charge.date),
                             y: .value("Amount", Double(charge.amount) / 100.0)
                         )
-                        .foregroundStyle(liveSub.category.tint)
+                        .foregroundStyle(CategoryRegistry.shared.tint(for: liveSub.category))
                         .symbolSize(30)
                     }
                     .chartYAxis {
@@ -243,7 +273,7 @@ struct SubscriptionDetailView: View {
                 ForEach(Array(charges)) { charge in
                     HStack {
                         Circle()
-                            .fill(liveSub.category.tint)
+                            .fill(CategoryRegistry.shared.tint(for: liveSub.category))
                             .frame(width: 6, height: 6)
 
                         Text(formatDate(charge.date))
@@ -490,7 +520,10 @@ struct SubscriptionDetailView: View {
     private var cycleShort: String {
         switch liveSub.billingCycle {
         case .weekly: return "wk"
+        case .biweekly: return "2w"
         case .monthly: return "mo"
+        case .quarterly: return "qtr"
+        case .semiannual: return "6mo"
         case .yearly: return "yr"
         case .custom: return "mo"
         }
