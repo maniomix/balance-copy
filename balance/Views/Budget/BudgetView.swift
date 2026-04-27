@@ -13,7 +13,6 @@ struct BudgetView: View {
     @State private var showAddCategory = false
     @State private var newCategoryName = ""
     @State private var editingCustomCategory: CustomCategoryModel?
-    @State private var savedCategory: Category? = nil
     @FocusState private var focus: Bool
 
     // Check if budget has changed
@@ -235,30 +234,12 @@ struct BudgetView: View {
                                             Spacer()
 
                                             HStack(spacing: 6) {
-                                                // Save confirmation checkmark
-                                                if savedCategory == c {
-                                                    Image(systemName: "checkmark.circle.fill")
-                                                        .font(.system(size: 14))
-                                                        .foregroundStyle(DS.Colors.positive)
-                                                        .transition(.scale.combined(with: .opacity))
-                                                }
-
                                                 TextField("0.00", text: Binding(
                                                     get: { editingCategoryBudgets[c] ?? "" },
                                                     set: { newVal in
                                                         editingCategoryBudgets[c] = newVal
                                                         let v = DS.Format.cents(from: newVal)
                                                         store.setCategoryBudget(v, for: c)
-
-                                                        // Show save confirmation
-                                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                                            savedCategory = c
-                                                        }
-                                                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                                                            withAnimation(.easeOut(duration: 0.3)) {
-                                                                if savedCategory == c { savedCategory = nil }
-                                                            }
-                                                        }
                                                     }
                                                 ))
                                                 .keyboardType(.decimalPad)
@@ -355,28 +336,6 @@ struct BudgetView: View {
                                 }
                             }
                         }
-                        .overlay(alignment: .center) {
-                            if !subscriptionManager.isPro {
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                        .fill(.ultraThinMaterial)
-
-                                    VStack(spacing: 8) {
-                                        Image(systemName: "lock.fill")
-                                            .font(.system(size: 28))
-                                            .foregroundStyle(DS.Colors.subtext)
-
-                                        Text("category budgets")
-                                            .font(.system(size: 14, weight: .semibold, design: .rounded))
-                                            .foregroundStyle(DS.Colors.text)
-
-                                        Text("pro user access only")
-                                            .font(.system(size: 11, weight: .medium, design: .rounded))
-                                            .foregroundStyle(DS.Colors.subtext)
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -384,7 +343,7 @@ struct BudgetView: View {
                 .padding(.bottom, 24)
             }
             .navigationTitle("Budget")
-            .keyboardManagement()
+            .dismissKeyboardOnTap()
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
@@ -408,11 +367,6 @@ struct BudgetView: View {
                     onSave: { category in
                         if !store.customCategoriesWithIcons.contains(where: { $0.id == category.id }) {
                             store.customCategoriesWithIcons.append(category)
-                        }
-
-                        if !store.customCategoryNames.contains(category.name) {
-                            store.customCategoryNames.append(category.name)
-                            store.customCategoryNames.sort { $0.lowercased() < $1.lowercased() }
                         }
 
                         Task {
@@ -442,13 +396,7 @@ struct BudgetView: View {
                             store.customCategoriesWithIcons.append(saved)
                         }
 
-                        // 3. Ensure name is in customCategoryNames
-                        if !store.customCategoryNames.contains(newName) {
-                            store.customCategoryNames.append(newName)
-                            store.customCategoryNames.sort { $0.lowercased() < $1.lowercased() }
-                        }
-
-                        // 4. Save
+                        // 3. Save
                         Task {
                             try? await SupabaseManager.shared.saveStore(store)
                         }

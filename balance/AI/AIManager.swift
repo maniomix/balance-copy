@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import UIKit
 import LlamaSwift
 
 // ============================================================
@@ -45,8 +46,33 @@ class AIManager: ObservableObject {
     private var context: OpaquePointer?                       // llama_context *
     private var sampler: UnsafeMutablePointer<llama_sampler>? // llama_sampler *
 
-    /// Generation task — kept so we can cancel mid-stream.
-    private nonisolated(unsafe) var generationTask: Task<Void, Never>?
+    /// Thread-safe cancellation token shared between main thread and inference queue.
+    private final class CancelToken: @unchecked Sendable {
+        private(set) var isCancelled = false
+        func cancel() { isCancelled = true }
+    }
+
+    /// Active cancellation token for the current generation.
+    private var cancelToken: CancelToken?
+
+    // ── Idle auto-unload ──────────────────────────────────────
+    // Gemma 4 holds ~2-4 GB resident once loaded. After a generation
+    // finishes (or the user leaves an AI view, or the app backgrounds)
+    // we schedule an idle timer; if no new generation arrives within
+    // the timeout, the model is unloaded and RAM is reclaimed. The
+    // next inference re-loads it transparently.
+    private var idleTask: Task<Void, Never>?
+    private static let idleTimeoutSeconds: UInt64 = 60          // 1 min after generation finishes
+    private static let backgroundTimeoutSeconds: UInt64 = 15    // 15 s when app is backgrounded
+    private static let leftViewTimeoutSeconds: UInt64 = 20      // 20 s after user leaves an AI view
+
+    /// Dedicated serial queue for LLM inference — keeps main thread free.
+    /// GCD queue instead of Swift concurrency because llama_decode() blocks
+    /// for hundreds of ms and would starve the cooperative thread pool.
+    private static let inferenceQueue = DispatchQueue(
+        label: "com.centmond.ai.inference",
+        qos: .userInitiated
+    )
 
     // MARK: - Constants
 
@@ -120,11 +146,95 @@ class AIManager: ObservableObject {
 
     private init() {
         llama_backend_init()
+        installLifecycleObservers()
+    }
+
+    // MARK: - Idle / Lifecycle Auto-Unload
+
+    private func installLifecycleObservers() {
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.scheduleIdleUnload(seconds: Self.backgroundTimeoutSeconds, reason: "app backgrounded")
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.scheduleIdleUnload(seconds: Self.backgroundTimeoutSeconds, reason: "app inactive")
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if case .ready = self.status {
+                    self.scheduleIdleUnload(seconds: Self.idleTimeoutSeconds, reason: "app foregrounded")
+                }
+            }
+        }
+        // Reclaim aggressively when iOS warns memory is tight.
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if self.isGenerating { return }
+                SecureLogger.info("AI: memory warning received → unloading model")
+                self.unloadModel()
+            }
+        }
+    }
+
+    private func scheduleIdleUnload(seconds: UInt64, reason: String) {
+        idleTask?.cancel()
+        // Don't auto-unload while a generation is in flight.
+        guard !isGenerating else { return }
+        // No point scheduling if model isn't loaded.
+        if case .notLoaded = status { return }
+        if case .loading   = status { return }
+        if case .error     = status { return }
+        if case .downloading = status { return }
+        // Skip if model pointer is already nil.
+        guard model != nil else { return }
+
+        SecureLogger.info("AI auto-unload scheduled in \(seconds)s (\(reason))")
+        idleTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                if self.isGenerating { return }
+                guard case .ready = self.status else { return }
+                SecureLogger.info("AI model auto-unloaded after \(seconds)s idle (\(reason))")
+                self.unloadModel()
+            }
+        }
+    }
+
+    private func cancelIdleUnload() {
+        idleTask?.cancel()
+        idleTask = nil
+    }
+
+    /// Public hook for views to request an aggressive unload — call from
+    /// `.onDisappear` of any AI-using view so the model frees its RAM
+    /// shortly after the user navigates away. Cancelled automatically if
+    /// a new generation begins.
+    func requestUnloadSoon() {
+        scheduleIdleUnload(seconds: Self.leftViewTimeoutSeconds, reason: "left AI view")
     }
 
     deinit {
-        // Clean up directly since deinit is nonisolated
-        generationTask?.cancel()
+        // Signal cancellation to any running inference
+        cancelToken?.cancel()
         if let sampler { llama_sampler_free(sampler) }
         if let context { llama_free(context) }
         if let model   { llama_model_free(model) }
@@ -138,6 +248,10 @@ class AIManager: ObservableObject {
     /// Load the GGUF model from a file URL.
     /// Call on a background thread — model loading takes a few seconds.
     func loadModel(from url: URL? = nil) {
+        // Guard against double-loading or loading during other operations
+        if case .loading = status { return }
+        if case .downloading = status { return }
+
         let modelURL = url ?? Self.resolvedModelURL
         let modelPath = modelURL.path
 
@@ -192,6 +306,9 @@ class AIManager: ObservableObject {
                 self.setupSampler()
                 self.status = .ready
                 SecureLogger.info("AI model loaded successfully")
+                // Start the idle timer immediately — if the user loads but
+                // never generates, reclaim RAM after the timeout.
+                self.scheduleIdleUnload(seconds: Self.idleTimeoutSeconds, reason: "loaded, awaiting use")
             }
         }
     }
@@ -199,6 +316,7 @@ class AIManager: ObservableObject {
     /// Release all resources.
     func unloadModel() {
         cancelGeneration()
+        cancelIdleUnload()
 
         if let sampler { llama_sampler_free(sampler) }
         if let context { llama_free(context) }
@@ -255,9 +373,13 @@ class AIManager: ObservableObject {
 
     /// Multi-turn streaming — send full conversation history to the model.
     func stream(messages: [AIMessage], systemPrompt: String? = nil) -> AsyncStream<String> {
+        // A new inference cancels any pending auto-unload — the model will
+        // re-arm its idle timer when this generation completes.
+        cancelIdleUnload()
+
         let (stream, continuation) = AsyncStream.makeStream(of: String.self)
 
-        // Capture everything we need before entering the detached task
+        // Capture everything we need before entering the background queue
         let ctx = self.context
         let mdl = self.model
         let smp = self.sampler
@@ -271,21 +393,33 @@ class AIManager: ObservableObject {
         self.isGenerating = true
         self.status = .generating
 
-        generationTask = Task.detached(priority: .userInitiated) { [weak self] in
-            await AIManager.runGeneration(
+        // Cancel any previous generation
+        cancelToken?.cancel()
+
+        // Run inference on a dedicated serial queue — NOT the cooperative thread pool.
+        // llama_decode() blocks for hundreds of ms per call; the cooperative pool
+        // has very few threads and blocking one starves the entire async runtime.
+        let token = CancelToken()
+        self.cancelToken = token
+
+        AIManager.inferenceQueue.async { [weak self] in
+            AIManager.runGenerationSync(
                 ctx: ctx, mdl: mdl, smp: smp,
                 messages: messages, systemPrompt: systemPrompt,
-                maxTokens: maxTok, continuation: continuation
+                maxTokens: maxTok, continuation: continuation,
+                token: token
             )
-            await MainActor.run {
+            DispatchQueue.main.async {
                 self?.isGenerating = false
                 self?.status = .ready
+                // Generation done — arm the idle timer so the model frees
+                // its KV cache + weights if the user walks away.
+                self?.scheduleIdleUnload(seconds: AIManager.idleTimeoutSeconds, reason: "generation finished")
             }
         }
 
-        let task = generationTask
         continuation.onTermination = { _ in
-            task?.cancel()
+            token.cancel()
         }
 
         return stream
@@ -293,10 +427,15 @@ class AIManager: ObservableObject {
 
     /// Cancel any in-progress generation.
     func cancelGeneration() {
-        generationTask?.cancel()
-        generationTask = nil
+        cancelToken?.cancel()
         isGenerating = false
-        if case .generating = status { status = .ready }
+        if case .generating = status {
+            status = .ready
+            // Cancelled mid-stream still counts as "done using AI" — arm the
+            // idle timer so an aborted generation doesn't leave the model
+            // resident forever.
+            scheduleIdleUnload(seconds: Self.idleTimeoutSeconds, reason: "generation cancelled")
+        }
     }
 
     // ============================================================
@@ -325,16 +464,19 @@ class AIManager: ObservableObject {
     // MARK: - Chat Template & Tokenization
     // ============================================================
 
-    /// Core generation loop — runs on a detached task.
-    private static func runGeneration(
+    /// Core generation loop — runs synchronously on the dedicated inference queue.
+    /// Uses a `CancelToken` instead of Task.isCancelled since this runs on a
+    /// plain GCD queue, not in the Swift concurrency runtime.
+    private static func runGenerationSync(
         ctx: OpaquePointer,
         mdl: OpaquePointer,
         smp: UnsafeMutablePointer<llama_sampler>,
         messages: [AIMessage],
         systemPrompt: String?,
         maxTokens: Int32,
-        continuation: AsyncStream<String>.Continuation
-    ) async {
+        continuation: AsyncStream<String>.Continuation,
+        token: CancelToken
+    ) {
         let fullPrompt = buildPromptStatic(
             model: mdl, messages: messages, systemPrompt: systemPrompt
         )
@@ -348,13 +490,17 @@ class AIManager: ObservableObject {
         }
 
         // Truncate prompt to fit context window (leave room for generation)
+        // Strategy: keep the FULL system prompt (formatting rules, persona, etc.)
+        // and trim from conversation history middle if needed.
         let ctxSize = Int(llama_n_ctx(ctx))
         let maxPromptTokens = ctxSize - Int(maxTokens) - 16  // reserve for generation
         if tokens.count > maxPromptTokens {
             SecureLogger.info("Truncating prompt: \(tokens.count) → \(maxPromptTokens) tokens (ctx=\(ctxSize))")
-            // Keep the beginning (system prompt) and the end (latest user message)
-            let keepStart = maxPromptTokens / 3       // ~1/3 system prompt
-            let keepEnd = maxPromptTokens - keepStart  // ~2/3 recent conversation
+            // Keep 45% from start (system prompt + early history) and 55% from end
+            // (recent history + model turn). This preserves formatting instructions
+            // which are at the start of the prompt.
+            let keepStart = (maxPromptTokens * 45) / 100
+            let keepEnd = maxPromptTokens - keepStart
             tokens = Array(tokens.prefix(keepStart)) + Array(tokens.suffix(keepEnd))
         }
 
@@ -364,7 +510,7 @@ class AIManager: ObservableObject {
         let batchLimit = Int(llama_n_batch(ctx))
         var offset = 0
         while offset < tokens.count {
-            if Task.isCancelled { continuation.finish(); return }
+            if token.isCancelled { continuation.finish(); return }
             let remaining = tokens.count - offset
             let chunkSize = min(remaining, batchLimit)
             let chunk = Array(tokens[offset..<(offset + chunkSize)])
@@ -380,7 +526,7 @@ class AIManager: ObservableObject {
         let eosToken = llama_vocab_eos(vocab)
 
         for _ in 0..<maxTokens {
-            if Task.isCancelled { break }
+            if token.isCancelled { break }
 
             let tokenId = llama_sampler_sample(smp, ctx, -1)
             if tokenId == eosToken { break }

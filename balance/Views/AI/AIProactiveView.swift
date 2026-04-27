@@ -190,7 +190,7 @@ struct AIProactiveView: View {
     // MARK: - Section View (Briefing / Review)
     // ══════════════════════════════════════════════════════════
 
-    private func sectionView(_ section: BriefingSection) -> some View {
+    private func sectionView(_ section: ProactiveBriefingSection) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: section.icon)
@@ -287,6 +287,7 @@ struct AIProactiveBanner: View {
 
     var onOpenFeed: (() -> Void)? = nil
     var onOpenChat: (() -> Void)? = nil
+    var onOpenDetail: ((ProactiveItem) -> Void)? = nil
 
     var body: some View {
         let top = engine.topItems
@@ -302,8 +303,13 @@ struct AIProactiveBanner: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 10) {
                             ForEach(top) { item in
-                                compactCard(item)
-                                    .frame(width: 260)
+                                Button {
+                                    onOpenDetail?(item)
+                                } label: {
+                                    compactCard(item)
+                                        .frame(width: 260)
+                                }
+                                .buttonStyle(.plain)
                             }
 
                             // "See all" pill
@@ -334,52 +340,102 @@ struct AIProactiveBanner: View {
     // ── Briefing Banner ──
 
     private func briefingBanner(_ item: ProactiveItem) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: "sun.max.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(DS.Colors.warning)
-                Text(item.title)
-                    .font(DS.Typography.callout)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(DS.Colors.text)
-                Spacer()
-                Button {
-                    withAnimation { engine.dismiss(item.id) }
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(DS.Colors.subtext)
+        let (icon, accent, bgTint) = briefingTheme()
+        return Button {
+            onOpenDetail?(item)
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center, spacing: 10) {
+                    ZStack {
+                        Circle()
+                            .fill(accent.opacity(0.18))
+                            .frame(width: 34, height: 34)
+                        Image(systemName: icon)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(accent)
+                    }
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(item.title)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(DS.Colors.text)
+                        Text(item.summary)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(DS.Colors.subtext)
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+
+                    Button {
+                        withAnimation { engine.dismiss(item.id) }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(DS.Colors.subtext)
+                            .padding(6)
+                            .background(Circle().fill(DS.Colors.subtext.opacity(0.08)))
+                    }
+                    .buttonStyle(.plain)
                 }
-            }
 
-            Text(item.summary)
-                .font(DS.Typography.caption)
-                .foregroundStyle(DS.Colors.subtext)
-
-            if !item.sections.isEmpty {
-                HStack(spacing: 8) {
-                    ForEach(item.sections.prefix(3)) { section in
-                        HStack(spacing: 3) {
-                            Image(systemName: section.icon)
-                                .font(.system(size: 9))
-                            Text(section.title)
-                                .font(.system(size: 10, weight: .medium))
+                if !item.sections.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(item.sections.prefix(4)) { section in
+                            HStack(spacing: 4) {
+                                Image(systemName: section.icon)
+                                    .font(.system(size: 9, weight: .semibold))
+                                Text(section.title)
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .foregroundStyle(severityColor(section.severity))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule().fill(severityColor(section.severity).opacity(0.12))
+                            )
                         }
-                        .foregroundStyle(severityColor(section.severity))
                     }
                 }
             }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                LinearGradient(
+                    colors: [bgTint.opacity(colorScheme == .dark ? 0.22 : 0.14),
+                             bgTint.opacity(colorScheme == .dark ? 0.08 : 0.04)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+            )
+            .background(
+                colorScheme == .dark ? DS.Colors.surfaceElevated : DS.Colors.surface
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(accent.opacity(0.25), lineWidth: 1)
+            )
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(colorScheme == .dark ? DS.Colors.surfaceElevated : DS.Colors.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(DS.Colors.warning.opacity(0.2), lineWidth: 1)
-        )
+        .buttonStyle(.plain)
+    }
+
+    /// Time-aware icon + accent color for the briefing banner.
+    private func briefingTheme() -> (icon: String, accent: Color, bgTint: Color) {
+        let hour = Calendar.current.component(.hour, from: Date())
+        switch hour {
+        case 5..<12:
+            // Morning — sunrise yellow
+            return ("sun.horizon.fill", Color(red: 1.0, green: 0.75, blue: 0.25), Color(red: 1.0, green: 0.85, blue: 0.4))
+        case 12..<17:
+            // Afternoon — bright orange
+            return ("sun.max.fill", Color(red: 1.0, green: 0.6, blue: 0.2), Color(red: 1.0, green: 0.7, blue: 0.3))
+        case 17..<22:
+            // Evening — sunset purple
+            return ("sunset.fill", Color(red: 0.85, green: 0.4, blue: 0.6), Color(red: 0.7, green: 0.3, blue: 0.7))
+        default:
+            // Night — moon indigo
+            return ("moon.stars.fill", Color(red: 0.45, green: 0.55, blue: 0.95), Color(red: 0.3, green: 0.4, blue: 0.85))
+        }
     }
 
     // ── Compact Card ──

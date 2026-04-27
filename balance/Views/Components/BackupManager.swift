@@ -10,7 +10,11 @@ struct BackupManager {
         let createdAt: Date
         let transactions: [Transaction]
         let budgetsByMonth: [String: Int]
-        let customCategoryNames: [String]
+        /// Legacy field — pre-Phase-7 backups stored just names.
+        /// Optional now: new backups omit it, old backups still decode.
+        let customCategoryNames: [String]?
+        /// Phase 7+ — full models (icon/colour/sortOrder).
+        let customCategoriesWithIcons: [CustomCategoryModel]?
         let categoryBudgetsByMonth: [String: [String: Int]]
 
         var transactionCount: Int { transactions.count }
@@ -32,7 +36,10 @@ struct BackupManager {
             createdAt: Date(),
             transactions: store.transactions,
             budgetsByMonth: store.budgetsByMonth,
-            customCategoryNames: store.customCategoryNames,
+            // Phase 7: stop writing the legacy names list — newer backups
+            // carry the full icon-bearing models below.
+            customCategoryNames: nil,
+            customCategoriesWithIcons: store.customCategoriesWithIcons,
             categoryBudgetsByMonth: store.categoryBudgetsByMonth
         )
     }
@@ -133,9 +140,13 @@ struct BackupManager {
                 }
             }
 
-            for cat in backup.customCategoryNames {
-                if !store.customCategoryNames.contains(cat) {
-                    store.customCategoryNames.append(cat)
+            // Phase 7 restore: prefer `customCategoriesWithIcons` from the
+            // backup; fall back to synthesising models from the legacy
+            // `customCategoryNames` for older backups.
+            let restoredCategories = restoredCustomCategories(from: backup)
+            for model in restoredCategories {
+                if !store.customCategoriesWithIcons.contains(where: { $0.name.lowercased() == model.name.lowercased() }) {
+                    store.customCategoriesWithIcons.append(model)
                 }
             }
 
@@ -161,6 +172,7 @@ struct BackupManager {
             store.transactions.removeAll()
             store.budgetsByMonth.removeAll()
             store.customCategoryNames.removeAll()
+            store.customCategoriesWithIcons.removeAll()
             store.categoryBudgetsByMonth.removeAll()
             // Cascade: drop household split expenses tied to the wiped transactions.
             if !wipedIds.isEmpty {
@@ -188,10 +200,24 @@ struct BackupManager {
             }
 
             store.budgetsByMonth = backup.budgetsByMonth
-            store.customCategoryNames = backup.customCategoryNames
+            store.customCategoriesWithIcons = restoredCustomCategories(from: backup)
             store.categoryBudgetsByMonth = backup.categoryBudgetsByMonth
 
             return .success(validation.accepted.count)
+        }
+    }
+
+    /// Resolve the custom-category list from a `BackupData` regardless of which
+    /// field is populated. Phase 7 backups carry `customCategoriesWithIcons`;
+    /// older backups carry just `customCategoryNames` and we synthesise models
+    /// with default icon/colour for each.
+    private static func restoredCustomCategories(from backup: BackupData) -> [CustomCategoryModel] {
+        if let icons = backup.customCategoriesWithIcons, !icons.isEmpty {
+            return icons
+        }
+        guard let names = backup.customCategoryNames, !names.isEmpty else { return [] }
+        return names.enumerated().map { idx, name in
+            CustomCategoryModel(name: name, sortOrder: idx)
         }
     }
 

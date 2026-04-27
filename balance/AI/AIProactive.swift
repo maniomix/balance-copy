@@ -136,11 +136,11 @@ struct ProactiveItem: Identifiable {
     let dedupKey: String
 
     // ── Structured sections (for briefings/reviews) ──
-    var sections: [BriefingSection] = []
+    var sections: [ProactiveBriefingSection] = []
 }
 
 /// A section inside a briefing or review item.
-struct BriefingSection: Identifiable {
+struct ProactiveBriefingSection: Identifiable {
     let id = UUID()
     let title: String
     let icon: String
@@ -335,7 +335,7 @@ class AIProactiveEngine: ObservableObject {
         // Category budget warnings
         if let catBudgets = store.categoryBudgetsByMonth[monthKey] {
             let expenses = store.transactions.filter {
-                $0.type == .expense && cal.isDate($0.date, equalTo: month, toGranularity: .month)
+                $0.type == .expense && !$0.isTransfer && cal.isDate($0.date, equalTo: month, toGranularity: .month)
             }
             var catSpent: [String: Int] = [:]
             for t in expenses { catSpent[t.category.storageKey, default: 0] += t.amount }
@@ -412,7 +412,7 @@ class AIProactiveEngine: ObservableObject {
         let month = Date()
 
         let monthExpenses = store.transactions.filter {
-            $0.type == .expense && cal.isDate($0.date, equalTo: month, toGranularity: .month)
+            $0.type == .expense && !$0.isTransfer && cal.isDate($0.date, equalTo: month, toGranularity: .month)
         }
 
         // Group by category and find anomalies
@@ -632,7 +632,7 @@ class AIProactiveEngine: ObservableObject {
         let daysInMonth = cal.range(of: .day, in: .month, for: month)?.count ?? 30
         let daysLeft = daysInMonth - dayOfMonth
 
-        var sections: [BriefingSection] = []
+        var sections: [ProactiveBriefingSection] = []
         var topActions: [String] = []
 
         // ── Budget status ──
@@ -649,11 +649,11 @@ class AIProactiveEngine: ObservableObject {
             }
 
             let sev: ProactiveSeverity = remaining < 0 ? .critical : (pct > 80 ? .warning : .info)
-            sections.append(BriefingSection(title: "Budget", icon: "chart.bar.fill", lines: lines, severity: sev))
+            sections.append(ProactiveBriefingSection(title: "Budget", icon: "chart.bar.fill", lines: lines, severity: sev))
 
             if remaining < 0 { topActions.append("Consider Budget Rescue workflow") }
         } else {
-            sections.append(BriefingSection(
+            sections.append(ProactiveBriefingSection(
                 title: "Budget", icon: "chart.bar.fill",
                 lines: ["No budget set. Total spending: \(fmtCents(spent))"]
             ))
@@ -667,7 +667,7 @@ class AIProactiveEngine: ObservableObject {
                 let when = days == 0 ? "today" : (days == 1 ? "tomorrow" : "in \(days) days")
                 return "\(sub.merchantName): \(fmtCents(sub.expectedAmount)) \(when)"
             }
-            sections.append(BriefingSection(title: "Upcoming Bills", icon: "clock.badge.exclamationmark.fill",
+            sections.append(ProactiveBriefingSection(title: "Upcoming Bills", icon: "clock.badge.exclamationmark.fill",
                                             lines: lines, severity: .info))
         }
 
@@ -676,7 +676,7 @@ class AIProactiveEngine: ObservableObject {
             $0.category == .other && cal.isDate($0.date, equalTo: month, toGranularity: .month)
         }.count
         if uncatCount > 0 {
-            sections.append(BriefingSection(
+            sections.append(ProactiveBriefingSection(
                 title: "Needs Attention", icon: "tag.fill",
                 lines: ["\(uncatCount) uncategorized transaction(s) this month"],
                 severity: uncatCount >= 5 ? .warning : .info
@@ -694,7 +694,7 @@ class AIProactiveEngine: ObservableObject {
                 return line
             }
             let anybehind = goals.contains { $0.trackingStatus == .behind }
-            sections.append(BriefingSection(
+            sections.append(ProactiveBriefingSection(
                 title: "Goals", icon: "target",
                 lines: lines,
                 severity: anybehind ? .warning : .positive
@@ -703,7 +703,7 @@ class AIProactiveEngine: ObservableObject {
 
         // ── Recommended actions ──
         if !topActions.isEmpty {
-            sections.append(BriefingSection(
+            sections.append(ProactiveBriefingSection(
                 title: "Recommended", icon: "lightbulb.fill",
                 lines: topActions,
                 severity: .info
@@ -714,9 +714,19 @@ class AIProactiveEngine: ObservableObject {
 
         let overallSeverity = sections.map(\.severity).min() ?? .info
 
+        let hour = cal.component(.hour, from: now)
+        let greetingTitle: String = {
+            switch hour {
+            case 5..<12:  return "Good Morning"
+            case 12..<17: return "Good Afternoon"
+            case 17..<22: return "Good Evening"
+            default:      return "Late Night Check-in"
+            }
+        }()
+
         var item = ProactiveItem(
             id: UUID(), type: .morningBriefing, severity: overallSeverity,
-            title: "Good Morning",
+            title: greetingTitle,
             summary: budget > 0
                 ? "\(fmtCents(budget - spent)) remaining this month"
                 : "\(fmtCents(spent)) spent this month",
@@ -745,10 +755,10 @@ class AIProactiveEngine: ObservableObject {
         let weekTxns = store.transactions.filter { $0.date >= weekAgo && $0.date <= now }
         guard !weekTxns.isEmpty else { return nil }
 
-        let expenses = weekTxns.filter { $0.type == .expense }
+        let expenses = weekTxns.filter { $0.type == .expense && !$0.isTransfer }
         let totalSpent = expenses.reduce(0) { $0 + $1.amount }
 
-        var sections: [BriefingSection] = []
+        var sections: [ProactiveBriefingSection] = []
 
         // ── Spending this week ──
         var catTotals: [String: Int] = [:]
@@ -759,19 +769,19 @@ class AIProactiveEngine: ObservableObject {
         for (cat, amount) in sorted.prefix(3) {
             spendLines.append("  \(cat): \(fmtCents(amount))")
         }
-        sections.append(BriefingSection(title: "This Week", icon: "calendar", lines: spendLines))
+        sections.append(ProactiveBriefingSection(title: "This Week", icon: "calendar", lines: spendLines))
 
         // ── Compare to previous week ──
         if let twoWeeksAgo = cal.date(byAdding: .day, value: -14, to: now) {
             let prevWeekExpenses = store.transactions.filter {
-                $0.date >= twoWeeksAgo && $0.date < weekAgo && $0.type == .expense
+                $0.date >= twoWeeksAgo && $0.date < weekAgo && $0.type == .expense && !$0.isTransfer
             }
             let prevTotal = prevWeekExpenses.reduce(0) { $0 + $1.amount }
             if prevTotal > 0 {
                 let diff = totalSpent - prevTotal
                 let pctChange = diff * 100 / prevTotal
                 let direction = diff > 0 ? "up" : "down"
-                sections.append(BriefingSection(
+                sections.append(ProactiveBriefingSection(
                     title: "vs Last Week", icon: "arrow.up.arrow.down",
                     lines: ["\(fmtCents(abs(diff))) \(direction) (\(abs(pctChange))%)"],
                     severity: diff > 0 ? .warning : .positive
@@ -785,7 +795,7 @@ class AIProactiveEngine: ObservableObject {
         if budget > 0 {
             let monthSpent = store.spent(for: now)
             let remaining = budget - monthSpent
-            sections.append(BriefingSection(
+            sections.append(ProactiveBriefingSection(
                 title: "Month Budget", icon: "chart.bar.fill",
                 lines: ["\(fmtCents(remaining)) remaining of \(fmtCents(budget))"],
                 severity: remaining < 0 ? .critical : .info
@@ -800,7 +810,7 @@ class AIProactiveEngine: ObservableObject {
         let uncatCount = expenses.filter { $0.category == .other }.count
         if uncatCount > 0 { recs.append("\(uncatCount) uncategorized this week") }
         if !recs.isEmpty {
-            sections.append(BriefingSection(title: "Recommendations", icon: "lightbulb.fill",
+            sections.append(ProactiveBriefingSection(title: "Recommendations", icon: "lightbulb.fill",
                                             lines: recs, severity: .info))
         }
 

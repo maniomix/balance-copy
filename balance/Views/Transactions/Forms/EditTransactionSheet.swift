@@ -256,21 +256,15 @@ struct EditTransactionSheet: View {
             FullCategoryEditor(
                 customCategories: $store.customCategoriesWithIcons,
                 onSave: { newCategory in
-                    // 1. اضافه کن
+                    // 1. Append (editor binding may have already done it; idempotent)
                     if !store.customCategoriesWithIcons.contains(where: { $0.id == newCategory.id }) {
                         store.customCategoriesWithIcons.append(newCategory)
                     }
-                    
-                    // 2. Sync names
-                    if !store.customCategoryNames.contains(newCategory.name) {
-                        store.customCategoryNames.append(newCategory.name)
-                        store.customCategoryNames.sort { $0.lowercased() < $1.lowercased() }
-                    }
-                    
-                    // 3. انتخاب
+
+                    // 2. Select
                     category = .custom(newCategory.name)
-                    
-                    // 4. Save
+
+                    // 3. Save
                     Task {
                         try? await SupabaseManager.shared.saveStore(store)
                     }
@@ -283,18 +277,12 @@ struct EditTransactionSheet: View {
                 customCategories: $store.customCategoriesWithIcons,
                 editingCategory: customCat,
                 onSave: { category in
-                    // 1. Update
+                    // 1. Update (editor binding may have already done it; idempotent)
                     if let index = store.customCategoriesWithIcons.firstIndex(where: { $0.id == category.id }) {
                         store.customCategoriesWithIcons[index] = category
                     }
-                    
-                    // 2. Sync names
-                    if !store.customCategoryNames.contains(category.name) {
-                        store.customCategoryNames.append(category.name)
-                        store.customCategoryNames.sort { $0.lowercased() < $1.lowercased() }
-                    }
-                    
-                    // 3. Save
+
+                    // 2. Save
                     Task {
                         try? await SupabaseManager.shared.saveStore(store)
                     }
@@ -349,6 +337,19 @@ struct EditTransactionSheet: View {
                     merchant: oldTransaction.note,
                     fromCategory: oldTransaction.category.storageKey,
                     toCategory: category.storageKey
+                )
+                // Few-shot learning: record the correction so future prompts use the right category
+                AIFewShotLearning.shared.recordCorrection(
+                    userMessage: oldTransaction.note,
+                    originalAction: AIAction(
+                        type: .addTransaction,
+                        params: AIAction.ActionParams(
+                            amount: oldTransaction.amount,
+                            category: oldTransaction.category.storageKey,
+                            note: oldTransaction.note
+                        )
+                    ),
+                    correctedCategory: category.storageKey
                 )
             }
             // Transaction record is durably saved. Balance/goal delta side-effects are

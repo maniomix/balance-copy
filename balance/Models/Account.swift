@@ -62,7 +62,15 @@ struct Account: Identifiable, Codable, Hashable {
     let createdAt: Date
     var updatedAt: Date
     var userId: UUID
-    
+
+    /// User-controlled ordering inside its asset/liability section. Lower = first.
+    var displayOrder: Int
+    /// Optional accent token (e.g. "blue", "violet") for the one-accent-per-card rule.
+    var colorTag: String?
+    /// When false, account balance is excluded from the net-worth roll-up
+    /// (still shown in lists, transactions still affect budgets).
+    var includeInNetWorth: Bool
+
     enum CodingKeys: String, CodingKey {
         case id
         case name
@@ -76,8 +84,11 @@ struct Account: Identifiable, Codable, Hashable {
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case userId = "user_id"
+        case displayOrder = "display_order"
+        case colorTag = "color_tag"
+        case includeInNetWorth = "include_in_net_worth"
     }
-    
+
     init(
         id: UUID = UUID(),
         name: String,
@@ -90,7 +101,10 @@ struct Account: Identifiable, Codable, Hashable {
         isArchived: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
-        userId: UUID
+        userId: UUID,
+        displayOrder: Int = 0,
+        colorTag: String? = nil,
+        includeInNetWorth: Bool = true
     ) {
         self.id = id
         self.name = name
@@ -104,6 +118,30 @@ struct Account: Identifiable, Codable, Hashable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.userId = userId
+        self.displayOrder = displayOrder
+        self.colorTag = colorTag
+        self.includeInNetWorth = includeInNetWorth
+    }
+
+    // Decoder-tolerant: rows from before the Phase 2 migration won't have the
+    // new columns; default them rather than fail the whole fetch.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        type = try c.decode(AccountType.self, forKey: .type)
+        currentBalance = try c.decode(Double.self, forKey: .currentBalance)
+        currency = try c.decode(String.self, forKey: .currency)
+        institutionName = try c.decodeIfPresent(String.self, forKey: .institutionName)
+        creditLimit = try c.decodeIfPresent(Double.self, forKey: .creditLimit)
+        interestRate = try c.decodeIfPresent(Double.self, forKey: .interestRate)
+        isArchived = try c.decode(Bool.self, forKey: .isArchived)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+        userId = try c.decode(UUID.self, forKey: .userId)
+        displayOrder = try c.decodeIfPresent(Int.self, forKey: .displayOrder) ?? 0
+        colorTag = try c.decodeIfPresent(String.self, forKey: .colorTag)
+        includeInNetWorth = try c.decodeIfPresent(Bool.self, forKey: .includeInNetWorth) ?? true
     }
     
     /// Absolute balance for net worth calculation

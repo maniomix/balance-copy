@@ -29,6 +29,8 @@ extension SupabaseManager {
         let invite_code: String
         let created_at: String
         let updated_at: String
+        /// JSON array of HouseholdGroup. Nullable for back-compat with old rows.
+        let groups_json: String?
     }
 
     private struct HouseholdMemberDTO: Codable {
@@ -41,6 +43,11 @@ extension SupabaseManager {
         let joined_at: String
         let shared_account_ids: String?   // JSON string or null
         let share_transactions: Bool
+        /// Archive fields — nullable for back-compat.
+        let is_active: Bool?
+        let archived_at: String?
+        /// JSON array of group UUID strings.
+        let group_ids: String?
     }
 
     private struct SplitExpenseDTO: Codable {
@@ -160,6 +167,7 @@ extension SupabaseManager {
             "name": household.name,
             "created_by": household.createdBy.lowercased(),
             "invite_code": household.inviteCode,
+            "groups_json": encodeJSON(household.groups),
             "created_at": isoString(household.createdAt),
             "updated_at": isoString(household.updatedAt)
         ]
@@ -170,6 +178,10 @@ extension SupabaseManager {
             .execute()
 
         SecureLogger.info("Household saved to cloud")
+    }
+
+    private func decodeGroups(_ raw: String?) -> [HouseholdGroup] {
+        decodeJSON([HouseholdGroup].self, from: raw) ?? []
     }
 
     func loadHousehold(householdId: UUID) async throws -> Household? {
@@ -187,6 +199,7 @@ extension SupabaseManager {
             createdBy: dto.created_by,
             members: [],  // loaded separately
             inviteCode: dto.invite_code,
+            groups: decodeGroups(dto.groups_json),
             createdAt: parseISO(dto.created_at),
             updatedAt: parseISO(dto.updated_at)
         )
@@ -208,6 +221,7 @@ extension SupabaseManager {
             createdBy: dto.created_by,
             members: [],
             inviteCode: dto.invite_code,
+            groups: decodeGroups(dto.groups_json),
             createdAt: parseISO(dto.created_at),
             updatedAt: parseISO(dto.updated_at)
         )
@@ -243,10 +257,15 @@ extension SupabaseManager {
             "email": member.email,
             "role": member.role.rawValue,
             "joined_at": isoString(member.joinedAt),
-            "share_transactions": member.shareTransactions ? "true" : "false"
+            "share_transactions": member.shareTransactions ? "true" : "false",
+            "is_active": member.isActive ? "true" : "false",
+            "group_ids": encodeJSON(member.groupIds.map { $0.uuidString.lowercased() })
         ]
         if let json = accountIdsJSON {
             data["shared_account_ids"] = json
+        }
+        if let archivedAt = member.archivedAt {
+            data["archived_at"] = isoString(archivedAt)
         }
 
         try await client.database
@@ -267,6 +286,8 @@ extension SupabaseManager {
             guard let uuid = UUID(uuidString: dto.id) else { return nil }
 
             let sharedIds: [String]? = decodeJSON([String].self, from: dto.shared_account_ids)
+            let groupIds = (decodeJSON([String].self, from: dto.group_ids) ?? [])
+                .compactMap { UUID(uuidString: $0) }
 
             return HouseholdMember(
                 id: uuid,
@@ -276,7 +297,10 @@ extension SupabaseManager {
                 role: HouseholdRole(rawValue: dto.role) ?? .viewer,
                 joinedAt: parseISO(dto.joined_at),
                 sharedAccountIds: sharedIds,
-                shareTransactions: dto.share_transactions
+                shareTransactions: dto.share_transactions,
+                isActive: dto.is_active ?? true,
+                archivedAt: dto.archived_at.map { parseISO($0) },
+                groupIds: groupIds
             )
         }
     }

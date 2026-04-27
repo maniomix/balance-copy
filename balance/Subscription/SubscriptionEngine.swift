@@ -147,13 +147,13 @@ class SubscriptionEngine: ObservableObject {
 
         let transactions = store.transactions
 
-        let result = await Task.detached(priority: .userInitiated) {
+        let detected = await Task.detached(priority: .userInitiated) {
             Self.detect(transactions: transactions, existingManual: [])
         }.value
 
         let recurringCandidates = Self.recurringCandidates(from: store.recurringTransactions)
 
-        mergeDetected(result.subscriptions)
+        mergeDetected(detected)
         mergeRecurring(recurringCandidates)
         consumeLegacyStatusOverrides()
 
@@ -336,12 +336,15 @@ class SubscriptionEngine: ObservableObject {
 
     /// Push the latest filtered records to `@Published subscriptions` and
     /// refresh totals. `republish()` is the only place that touches the
-    /// published list — every mutation goes through it.
+    /// published list — every mutation goes through it. Phase 6a also
+    /// reschedules subscription alerts from here so notifications stay
+    /// in lockstep with the data without per-call-site wiring.
     private func republish() {
         let visible = snapshot.records.filter { !snapshot.hiddenKeys.contains($0.merchantKey) }
         // Sort by monthly cost descending to match prior behavior.
         self.subscriptions = visible.sorted { $0.monthlyCost > $1.monthlyCost }
         recalcTotals()
+        SubscriptionAlertScheduler.rescheduleAll(records: visible)
     }
 
     // MARK: - Manual Actions
@@ -618,15 +621,15 @@ class SubscriptionEngine: ObservableObject {
 
     // MARK: - Pure Detection Logic (off main thread)
 
-    struct DetectionResult {
-        let subscriptions: [DetectedSubscription]
-        let globalInsights: [SubscriptionInsight]
-    }
-
+    /// Phase 9 — formerly returned a `DetectionResult` wrapper holding the
+    /// detected list plus a `globalInsights` array. The insights leg went
+    /// dead in Phase 2 once `analyze()` started calling
+    /// `computeGlobalInsights()` post-merge, so the wrapper is gone and
+    /// `existingManual` (always `[]` since Phase 2) is gone too.
     nonisolated static func detect(
         transactions: [Transaction],
-        existingManual: [DetectedSubscription]
-    ) -> DetectionResult {
+        existingManual: [DetectedSubscription] = []
+    ) -> [DetectedSubscription] {
         let cal = Calendar.current
         let now = Date()
 
@@ -783,67 +786,7 @@ class SubscriptionEngine: ObservableObject {
         // Sort by monthly cost descending
         all.sort { $0.monthlyCost > $1.monthlyCost }
 
-        // ─── Step 4: Detect global insights ───
-
-        var globalInsights: [SubscriptionInsight] = []
-
-        // Any price increases?
-        if all.contains(where: { $0.hasPriceIncrease }) {
-            globalInsights.append(.priceIncreased)
-        }
-
-        // Any upcoming in 7 days?
-        if all.contains(where: {
-            guard let days = $0.daysUntilRenewal else { return false }
-            return days <= 7 && days >= 0 && $0.status == .active
-        }) {
-            globalInsights.append(.upcomingRenewal)
-        }
-
-        // Any suspected unused?
-        if all.contains(where: { $0.status == .suspectedUnused }) {
-            globalInsights.append(.maybeUnused)
-        }
-
-        // Missed charge check
-        if all.contains(where: { $0.hasMissedCharge }) {
-            globalInsights.append(.missedCharge)
-        }
-
-        // Duplicate risk check — broader: same category + similar name OR similar amount
-        let activeSubs = all.filter { $0.status == .active }
-        var hasDuplicate = false
-        for i in 0..<activeSubs.count {
-            for j in (i+1)..<activeSubs.count {
-                if activeSubs[i].category == activeSubs[j].category {
-                    // Amount similarity
-                    let diff = abs(activeSubs[i].expectedAmount - activeSubs[j].expectedAmount)
-                    let threshold = max(activeSubs[i].expectedAmount, activeSubs[j].expectedAmount) * 2 / 5
-                    let amountSimilar = diff <= threshold
-
-                    // Name similarity
-                    let nameSimilar = merchantNamesSimilar(
-                        activeSubs[i].merchantName, activeSubs[j].merchantName
-                    )
-
-                    if amountSimilar || nameSimilar {
-                        hasDuplicate = true
-                        break
-                    }
-                }
-            }
-            if hasDuplicate { break }
-        }
-        if hasDuplicate {
-            globalInsights.append(.duplicateRisk)
-        }
-
-        // Newly detected (subscriptions with only 2-3 charges)
-        if all.contains(where: { $0.chargeHistory.count <= 3 && $0.isAutoDetected && $0.status == .active }) {
-            globalInsights.append(.newlyDetected)
-        }
-
-        return DetectionResult(subscriptions: all, globalInsights: globalInsights)
+        return all
     }
 
     // MARK: - Helpers

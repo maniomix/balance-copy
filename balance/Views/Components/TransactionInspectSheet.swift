@@ -19,11 +19,11 @@ struct TransactionInspectSheet: View {
                         DS.Card {
                             HStack(spacing: 16) {
                                 Circle()
-                                    .fill(transaction.category.tint.opacity(0.2))
+                                    .fill(CategoryRegistry.shared.tint(for: transaction.category).opacity(0.2))
                                     .frame(width: 60, height: 60)
                                     .overlay(
-                                        Image(systemName: transaction.category.icon)
-                                            .foregroundStyle(transaction.category.tint)
+                                        Image(systemName: CategoryRegistry.shared.icon(for: transaction.category))
+                                            .foregroundStyle(CategoryRegistry.shared.tint(for: transaction.category))
                                             .font(.system(size: 24, weight: .semibold))
                                     )
 
@@ -272,11 +272,11 @@ struct TransactionInspectPreview: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 12) {
                 Circle()
-                    .fill(transaction.category.tint.opacity(0.2))
+                    .fill(CategoryRegistry.shared.tint(for: transaction.category).opacity(0.2))
                     .frame(width: 50, height: 50)
                     .overlay(
-                        Image(systemName: transaction.category.icon)
-                            .foregroundStyle(transaction.category.tint)
+                        Image(systemName: CategoryRegistry.shared.icon(for: transaction.category))
+                            .foregroundStyle(CategoryRegistry.shared.tint(for: transaction.category))
                             .font(.system(size: 20, weight: .semibold))
                     )
 

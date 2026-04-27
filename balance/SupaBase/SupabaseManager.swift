@@ -184,10 +184,10 @@ class SupabaseManager: ObservableObject {
         syncedStore.categoryBudgetsByMonth = mergedCategoryBudgets
         syncedStore.customCategoriesWithIcons = customCategories
         syncedStore.recurringTransactions = recurringTransactions
-        
-        // ✅ Sync customCategoryNames from server (not merge with local)
-        syncedStore.customCategoryNames = customCategories.map { $0.name }.sorted { $0.lowercased() < $1.lowercased() }
-        
+        // Phase 7: legacy `customCategoryNames` is no longer rebuilt here;
+        // `Store.migrateCustomCategoriesIfNeeded()` drains it on load.
+
+
         SecureLogger.info("Store synced: \(transactions.count) transactions, \(recurringTransactions.count) recurring, \(customCategories.count) custom categories")
         return syncedStore
     }

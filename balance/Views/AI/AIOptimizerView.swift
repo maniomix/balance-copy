@@ -1,4 +1,5 @@
 import SwiftUI
+import ExyteGrid
 
 // ============================================================
 // MARK: - AI Optimizer View (Phase 8)
@@ -66,10 +67,10 @@ struct AIOptimizerView: View {
             (.spendingFreeze,     "Spending Freeze"),
         ]
 
-        return LazyVGrid(columns: [
-            GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())
-        ], spacing: 10) {
-            ForEach(types, id: \.0) { (type, label) in
+        return ExyteGrid.Grid(tracks: 3, spacing: 10) {
+            ForEach(0..<types.count, id: \.self) { idx in
+                let type = types[idx].0
+                let label = types[idx].1
                 Button {
                     runOptimization(type)
                 } label: {

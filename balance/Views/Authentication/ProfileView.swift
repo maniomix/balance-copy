@@ -34,7 +34,7 @@ struct ProfileView: View {
     }
     
     private var totalSpentAllTime: Int {
-        store.transactions.filter { $0.type == .expense }.reduce(0) { $0 + $1.amount }
+        store.transactions.filter { $0.type == .expense && !$0.isTransfer }.reduce(0) { $0 + $1.amount }
     }
     
     private var totalIncomeAllTime: Int {

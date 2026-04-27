@@ -106,11 +106,11 @@ class ForecastEngine: ObservableObject {
         let divisor = max(1, monthsOfData)
 
         let totalExpenses3m = pastTransactions
-            .filter { $0.type == .expense }
+            .filter { $0.type == .expense && !$0.isTransfer }
             .reduce(0) { $0 + $1.amount }
 
         let totalIncome3m = pastTransactions
-            .filter { $0.type == .income }
+            .filter { $0.type == .income && !$0.isTransfer }
             .reduce(0) { $0 + $1.amount }
 
         let avgMonthlyExpense = totalExpenses3m / divisor
@@ -126,7 +126,7 @@ class ForecastEngine: ObservableObject {
         }
 
         let spentThisMonth = selectedMonthTx
-            .filter { $0.type == .expense }
+            .filter { $0.type == .expense && !$0.isTransfer }
             .reduce(0) { $0 + $1.amount }
 
         let incomeThisMonth = selectedMonthTx
@@ -303,7 +303,7 @@ class ForecastEngine: ObservableObject {
         // ─── Step 10: Spending breakdown ───
 
         let spendingByCategory = computeCategoryBreakdown(
-            transactions: selectedMonthTx.filter { $0.type == .expense }
+            transactions: selectedMonthTx.filter { $0.type == .expense && !$0.isTransfer }
         )
 
         // ─── Compute data confidence ───
@@ -632,7 +632,7 @@ class ForecastEngine: ObservableObject {
         // Group spending by day
         var dailyExpense: [Int: Int] = [:]   // day number -> total expense
         var dailyIncome: [Int: Int] = [:]    // day number -> total income
-        for tx in transactions {
+        for tx in transactions where !tx.isTransfer {
             let day = cal.component(.day, from: tx.date)
             if tx.type == .expense {
                 dailyExpense[day, default: 0] += tx.amount

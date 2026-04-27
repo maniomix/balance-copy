@@ -7,6 +7,7 @@ import SwiftUI
 struct SubscriptionsOverviewView: View {
     @Binding var store: Store
     @StateObject private var engine = SubscriptionEngine.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page: SubscriptionPage = .overview
     @State private var sortOption: SortOption = .cost
     @State private var selectedInsight: SubscriptionInsight? = nil
@@ -15,6 +16,13 @@ struct SubscriptionsOverviewView: View {
     /// the X on a banner hides it for the rest of this view's lifetime;
     /// it returns next launch (re-derived from the engine's insight set).
     @State private var dismissedInsights: Set<SubscriptionInsight> = []
+
+    /// Phase 10 — spring animation gated on reduce-motion. When the
+    /// user has Reduce Motion enabled in iOS Accessibility settings the
+    /// transitions become instantaneous instead of bouncy.
+    private var transitionAnimation: Animation? {
+        reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.9)
+    }
 
     enum SortOption: String, CaseIterable {
         case cost = "Cost"
@@ -43,9 +51,14 @@ struct SubscriptionsOverviewView: View {
             ZStack {
                 DS.Colors.bg.ignoresSafeArea()
 
-                if engine.subscriptions.isEmpty && !engine.isLoading {
+                if engine.subscriptions.isEmpty && engine.hiddenSubscriptions.isEmpty && !engine.isLoading {
+                    // No records at all — true empty state.
                     emptyState
                 } else {
+                    // Even if every visible record is hidden, render the
+                    // page so the Hidden section is reachable from
+                    // sectionedList. Phase 10 — guards against the user
+                    // hiding everything and getting "stuck."
                     ScrollView {
                         VStack(spacing: 16) {
                             summaryCard
@@ -160,7 +173,7 @@ struct SubscriptionsOverviewView: View {
             ForEach(SubscriptionPage.allCases) { p in
                 Button {
                     Haptics.selection()
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
+                    withAnimation(transitionAnimation) {
                         page = p
                     }
                 } label: {
@@ -371,7 +384,7 @@ struct SubscriptionsOverviewView: View {
 
             Button {
                 Haptics.selection()
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                withAnimation(transitionAnimation) {
                     _ = dismissedInsights.insert(insight)
                 }
             } label: {

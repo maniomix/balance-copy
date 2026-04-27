@@ -12,69 +12,69 @@ enum DS {
             })
         }
 
-        // ── Backgrounds ──
+        // ── Backgrounds (Pure black in dark, warm soft canvas in light) ──
         static let bg = adaptive(
-            light: UIColor(red: 0.97, green: 0.97, blue: 0.98, alpha: 1),  // #F7F7FA
-            dark:  UIColor(red: 0.07, green: 0.07, blue: 0.09, alpha: 1)   // #121217
+            light: UIColor(red: 0.96, green: 0.97, blue: 0.99, alpha: 1),  // #F5F7FC soft blue-tinted canvas
+            dark:  .black                                                   // #000000 pure black
         )
         static let surface = adaptive(
-            light: .white,
-            dark:  UIColor(red: 0.11, green: 0.11, blue: 0.14, alpha: 1)   // #1C1C23
+            light: .white,                                                  // crisp white cards pop on tinted bg
+            dark:  UIColor(red: 0.05, green: 0.05, blue: 0.07, alpha: 1)   // #0D0D12 near-black card
         )
         static let surface2 = adaptive(
-            light: UIColor(red: 0.95, green: 0.95, blue: 0.97, alpha: 1),  // #F2F2F7
-            dark:  UIColor(red: 0.15, green: 0.15, blue: 0.18, alpha: 1)   // #26262E
+            light: UIColor(red: 0.93, green: 0.95, blue: 0.98, alpha: 1),  // #EDF2FA gentle blue-grey
+            dark:  UIColor(red: 0.09, green: 0.09, blue: 0.11, alpha: 1)   // #17171C
         )
-        /// Elevated surface for cards in dark mode (slightly lighter than surface)
+        /// Elevated surface for cards
         static let surfaceElevated = adaptive(
             light: .white,
-            dark:  UIColor(red: 0.13, green: 0.13, blue: 0.16, alpha: 1)   // #212128
+            dark:  UIColor(red: 0.07, green: 0.07, blue: 0.09, alpha: 1)   // #121217
         )
 
-        // ── Text ──
+        // ── Text (Stronger contrast for readability) ──
         static let text = adaptive(
-            light: UIColor(red: 0.11, green: 0.11, blue: 0.12, alpha: 1),  // #1C1C1F
-            dark:  UIColor(red: 0.95, green: 0.95, blue: 0.97, alpha: 1)   // #F2F2F7
+            light: UIColor(red: 0.07, green: 0.09, blue: 0.13, alpha: 1),  // #121720 near-black, slight blue
+            dark:  UIColor(red: 0.97, green: 0.98, blue: 1.00, alpha: 1)   // #F8FAFF crisp white
         )
         static let subtext = adaptive(
-            light: UIColor(red: 0.56, green: 0.56, blue: 0.58, alpha: 1),  // #8F8F94
-            dark:  UIColor(red: 0.60, green: 0.60, blue: 0.65, alpha: 1)   // #9999A6
+            light: UIColor(red: 0.40, green: 0.44, blue: 0.52, alpha: 1),  // #667085 readable secondary
+            dark:  UIColor(red: 0.60, green: 0.62, blue: 0.70, alpha: 1)   // cool grey
         )
         static let textTertiary = adaptive(
-            light: UIColor(red: 0.72, green: 0.72, blue: 0.74, alpha: 1),  // #B8B8BC
-            dark:  UIColor(red: 0.45, green: 0.45, blue: 0.50, alpha: 1)   // #737380
+            light: UIColor(red: 0.58, green: 0.62, blue: 0.70, alpha: 1),  // #939EB3 muted but visible
+            dark:  UIColor(red: 0.40, green: 0.42, blue: 0.50, alpha: 1)
         )
         static let grid = adaptive(
-            light: UIColor(red: 0.91, green: 0.91, blue: 0.93, alpha: 1),  // #E8E8ED
-            dark:  UIColor(red: 0.20, green: 0.20, blue: 0.24, alpha: 1)   // #33333D
+            light: UIColor(red: 0.88, green: 0.91, blue: 0.95, alpha: 1),  // #E1E8F2 soft blue-grey divider
+            dark:  UIColor(red: 0.14, green: 0.15, blue: 0.20, alpha: 1)
         )
 
-        // ── Accent (same in both modes) ──
-        static let accent = Color(red: 0.27, green: 0.35, blue: 0.96)       // #4559F5
+        // ── Accent: Beautiful electric blue ──
+        static let accent = Color(red: 0.20, green: 0.55, blue: 1.00)       // #338CFF vivid blue
         static let accentLight = adaptive(
-            light: UIColor(red: 0.27, green: 0.35, blue: 0.96, alpha: 0.08),
-            dark:  UIColor(red: 0.27, green: 0.35, blue: 0.96, alpha: 0.15)
+            light: UIColor(red: 0.20, green: 0.55, blue: 1.00, alpha: 0.10),
+            dark:  UIColor(red: 0.20, green: 0.55, blue: 1.00, alpha: 0.18)
         )
         static let buttonFill = adaptive(
             light: UIColor(red: 0.11, green: 0.11, blue: 0.12, alpha: 1),
-            dark:  UIColor(red: 0.95, green: 0.95, blue: 0.97, alpha: 1)
+            dark:  UIColor(red: 0.20, green: 0.55, blue: 1.00, alpha: 1)
         )
 
-        // ── Semantic (adaptive — vibrant in light, muted/pastel in dark) ──
+        // ── Semantic (refined — calmer in light, softer in dark) ──
         static let positive = adaptive(
-            light: UIColor(red: 0.18, green: 0.75, blue: 0.50, alpha: 1),   // #2EBF80 vibrant
+            light: UIColor(red: 0.10, green: 0.65, blue: 0.42, alpha: 1),   // #1AA66B deeper, more readable green
             dark:  UIColor(red: 0.40, green: 0.85, blue: 0.65, alpha: 1)    // #66D9A6 softer pastel
         )
         static let warning = adaptive(
-            light: UIColor(red: 0.95, green: 0.65, blue: 0.15, alpha: 1),   // #F2A626 vibrant amber
+            light: UIColor(red: 0.85, green: 0.55, blue: 0.05, alpha: 1),   // #D98C0D richer, less neon amber
             dark:  UIColor(red: 1.00, green: 0.78, blue: 0.40, alpha: 1)    // #FFC766 soft gold
         )
         static let danger = adaptive(
-            light: UIColor(red: 0.92, green: 0.28, blue: 0.30, alpha: 1),   // #EB474D vibrant
+            light: UIColor(red: 0.85, green: 0.22, blue: 0.27, alpha: 1),   // #D93845 grounded red
             dark:  UIColor(red: 0.98, green: 0.45, blue: 0.47, alpha: 1)    // #FA7378 softer coral
         )
         static let negative = adaptive(
-            light: UIColor(red: 0.92, green: 0.28, blue: 0.30, alpha: 1),   // #EB474D
+            light: UIColor(red: 0.85, green: 0.22, blue: 0.27, alpha: 1),   // #D93845
             dark:  UIColor(red: 0.98, green: 0.45, blue: 0.47, alpha: 1)    // #FA7378
         )
     }
@@ -100,21 +100,22 @@ enum DS {
 
     // MARK: - Gradients (Premium accent-based)
     enum Gradients {
-        /// Primary accent gradient — deep purple to accent blue
+        /// Primary accent gradient — deep azure to electric blue
         static let accent = LinearGradient(
             colors: [
-                Color(red: 0.22, green: 0.18, blue: 0.80),  // Deep indigo
-                Color(red: 0.27, green: 0.35, blue: 0.96)   // #4559F5
+                Color(red: 0.10, green: 0.30, blue: 0.85),  // Deep azure
+                Color(red: 0.20, green: 0.55, blue: 1.00),  // #338CFF
+                Color(red: 0.40, green: 0.75, blue: 1.00)   // Sky highlight
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
 
-        /// Subtle card shimmer — very low opacity accent wash
+        /// Subtle card shimmer — very low opacity blue wash
         static let cardShimmer = LinearGradient(
             colors: [
-                Color(red: 0.27, green: 0.35, blue: 0.96).opacity(0.06),
-                Color(red: 0.45, green: 0.25, blue: 0.85).opacity(0.03),
+                Color(red: 0.20, green: 0.55, blue: 1.00).opacity(0.08),
+                Color(red: 0.10, green: 0.40, blue: 0.90).opacity(0.04),
                 Color.clear
             ],
             startPoint: .topLeading,
@@ -144,8 +145,8 @@ enum DS {
         /// Mesh-style background overlay
         static let meshOverlay = LinearGradient(
             colors: [
-                Color(red: 0.27, green: 0.35, blue: 0.96).opacity(0.08),
-                Color(red: 0.50, green: 0.20, blue: 0.90).opacity(0.04),
+                Color(red: 0.20, green: 0.55, blue: 1.00).opacity(0.10),
+                Color(red: 0.10, green: 0.30, blue: 0.85).opacity(0.05),
                 Color.clear
             ],
             startPoint: .top,
@@ -181,17 +182,17 @@ enum DS {
                         .strokeBorder(
                             colorScheme == .dark
                                 ? Color.white.opacity(0.06)
-                                : Color.black.opacity(0.03),
+                                : Color(red: 0.20, green: 0.55, blue: 1.00).opacity(0.06),
                             lineWidth: 1
                         )
                 )
                 .shadow(
                     color: colorScheme == .dark
                         ? .clear                              // no shadow in dark — rely on elevation + border
-                        : .black.opacity(0.04),
-                    radius: 12,
+                        : Color(red: 0.10, green: 0.20, blue: 0.40).opacity(0.06),
+                    radius: 14,
                     x: 0,
-                    y: 4
+                    y: 6
                 )
         }
     }
@@ -200,15 +201,15 @@ enum DS {
     struct PrimaryButton: ButtonStyle {
         func makeBody(configuration: Configuration) -> some View {
             configuration.label
-                .font(Typography.body.weight(.semibold))
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white)
-                .padding(.vertical, 16)
+                .padding(.vertical, 10)
                 .frame(maxWidth: .infinity)
                 .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Colors.accent)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Gradients.accent)
                 )
-                .shadow(color: Colors.accent.opacity(configuration.isPressed ? 0 : 0.25), radius: 12, x: 0, y: 4)
+                .shadow(color: Colors.accent.opacity(configuration.isPressed ? 0.15 : 0.45), radius: 12, x: 0, y: 4)
                 .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
                 .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
         }
@@ -218,12 +219,12 @@ enum DS {
     struct ColoredButton: ButtonStyle {
         func makeBody(configuration: Configuration) -> some View {
             configuration.label
-                .font(Typography.body.weight(.semibold))
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
                 .foregroundStyle(Colors.accent)
-                .padding(.vertical, 14)
+                .padding(.vertical, 9)
                 .frame(maxWidth: .infinity)
                 .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Colors.accentLight)
                 )
                 .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
@@ -293,6 +294,23 @@ enum DS {
             }
             .padding(Spacing.xl)
             .frame(maxWidth: .infinity)
+        }
+    }
+
+    // MARK: - Beta Badge (small capsule for pre-release features)
+    struct BetaBadge: View {
+        var label: String = "BETA"
+        var color: Color = Colors.warning
+
+        var body: some View {
+            Text(label)
+                .font(.system(size: 9, weight: .heavy, design: .rounded))
+                .tracking(0.5)
+                .foregroundStyle(color)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(color.opacity(0.15)))
+                .overlay(Capsule().stroke(color.opacity(0.35), lineWidth: 0.5))
         }
     }
 

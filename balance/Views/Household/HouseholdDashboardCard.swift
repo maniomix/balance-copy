@@ -34,7 +34,7 @@ struct HouseholdDashboardCard: View {
                             .frame(width: 34, height: 34)
                             .background(DS.Colors.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: 4) {
                             Text(h.name)
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundStyle(DS.Colors.text)
@@ -45,26 +45,35 @@ struct HouseholdDashboardCard: View {
                                     .font(.system(size: 10, weight: .medium))
                                     .foregroundStyle(DS.Colors.subtext)
                             } else {
-                                Text("Invite a partner to start sharing")
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundStyle(DS.Colors.accent)
+                                HStack(spacing: 4) {
+                                    Image(systemName: "plus.circle.fill")
+                                        .font(.system(size: 10, weight: .semibold))
+                                    Text("Invite a partner")
+                                        .font(.system(size: 10, weight: .semibold))
+                                }
+                                .foregroundStyle(DS.Colors.accent)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(DS.Colors.accent.opacity(0.12), in: Capsule())
                             }
                         }
 
                         Spacer()
 
-                        // Avatars
-                        HStack(spacing: -5) {
-                            ForEach(h.members.prefix(3)) { member in
-                                Text(String(member.displayName.prefix(1)).uppercased())
-                                    .font(.system(size: 9, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .frame(width: 24, height: 24)
-                                    .background(
-                                        member.role == .owner ? DS.Colors.accent : DS.Colors.positive,
-                                        in: Circle()
-                                    )
-                                    .overlay(Circle().stroke(DS.Colors.surface, lineWidth: 1.5))
+                        // Avatars — only when partner(s) exist; solo-user avatar is redundant
+                        if snapshot.hasPartner {
+                            HStack(spacing: -5) {
+                                ForEach(h.members.prefix(3)) { member in
+                                    Text(String(member.displayName.prefix(1)).uppercased())
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 24, height: 24)
+                                        .background(
+                                            member.role == .owner ? DS.Colors.accent : DS.Colors.positive,
+                                            in: Circle()
+                                        )
+                                        .overlay(Circle().stroke(DS.Colors.surface, lineWidth: 1.5))
+                                }
                             }
                         }
 
@@ -264,6 +273,23 @@ struct HouseholdDashboardCard: View {
         }
         if snapshot.unsettledCount > 3 {
             alerts.append(AlertItem(icon: "clock.fill", text: "\(snapshot.unsettledCount) to settle", color: DS.Colors.warning))
+        }
+        // Top spender this month — ported from macOS DashboardHouseholdStrip.
+        // Only shows for multi-member households where spending is skewed
+        // (top member > 60% of household splits), to avoid noisy single-user text.
+        if let h = manager.household, h.members.count >= 2 {
+            let spending = manager.memberSpending(monthKey: monthKey)
+            let total = spending.values.reduce(0, +)
+            if total > 0,
+               let (topId, topAmt) = spending.max(by: { $0.value < $1.value }),
+               Double(topAmt) / Double(total) >= 0.6,
+               let m = h.members.first(where: { $0.userId == topId }) {
+                alerts.append(AlertItem(
+                    icon: "person.crop.circle.badge.exclamationmark",
+                    text: "\(m.displayName) \(Int((Double(topAmt) / Double(total) * 100).rounded()))%",
+                    color: DS.Colors.accent
+                ))
+            }
         }
 
         return alerts

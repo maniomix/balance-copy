@@ -165,15 +165,57 @@ struct CustomCategoryModel: Codable, Identifiable, Hashable {
     var name: String
     var icon: String
     var colorHex: String
+    var sortOrder: Int
 
-    init(id: String = UUID().uuidString, name: String, icon: String = "tag.fill", colorHex: String = "AF52DE") {
+    init(id: String = UUID().uuidString,
+         name: String,
+         icon: String = "tag.fill",
+         colorHex: String = "AF52DE",
+         sortOrder: Int = 0) {
         self.id = id
         self.name = name
         self.icon = icon
         self.colorHex = colorHex
+        self.sortOrder = sortOrder
     }
 
     var color: Color {
         Color(hex: colorHex) ?? .purple
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, icon, colorHex, sortOrder }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.icon = try c.decode(String.self, forKey: .icon)
+        self.colorHex = try c.decode(String.self, forKey: .colorHex)
+        // sortOrder is new — default to 0 for legacy records
+        self.sortOrder = (try? c.decode(Int.self, forKey: .sortOrder)) ?? 0
+    }
+}
+
+// MARK: - Custom Category Resolution
+//
+// `Category.custom(String)` only carries the name. Icon/color live on
+// `CustomCategoryModel` inside the Store. These helpers let any view that has
+// a `Store` resolve the proper icon/color for a custom category instead of
+// falling back to the generic gray "tag" baked into `Category.icon` / `.tint`.
+extension Category {
+    func icon(in store: Store) -> String {
+        if case .custom(let name) = self,
+           let model = store.customCategoriesWithIcons.first(where: { $0.name == name }) {
+            return model.icon
+        }
+        return self.icon
+    }
+
+    func tint(in store: Store) -> Color {
+        if case .custom(let name) = self,
+           let model = store.customCategoriesWithIcons.first(where: { $0.name == name }) {
+            return model.color
+        }
+        return self.tint
     }
 }

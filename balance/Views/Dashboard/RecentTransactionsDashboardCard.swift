@@ -62,11 +62,11 @@ struct RecentTransactionsDashboardCard: View {
                                     .accessibilityLabel("Income")
                             } else {
                                 Circle()
-                                    .fill(t.category.tint.opacity(0.15))
+                                    .fill(CategoryRegistry.shared.tint(for: t.category).opacity(0.15))
                                     .frame(width: 32, height: 32)
                                     .overlay(
-                                        Image(systemName: t.category.icon)
-                                            .foregroundStyle(t.category.tint)
+                                        Image(systemName: CategoryRegistry.shared.icon(for: t.category))
+                                            .foregroundStyle(CategoryRegistry.shared.tint(for: t.category))
                                             .font(.system(size: 13, weight: .semibold))
                                     )
                             }

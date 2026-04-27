@@ -256,7 +256,7 @@ enum AIConflictDetector {
 
             // ── Subscriptions ──
 
-            case .cancelSubscription:
+            case .cancelSubscription, .pauseSubscription:
                 if let name = p.subscriptionName {
                     if !SubscriptionEngine.shared.subscriptions.contains(where: {
                         $0.merchantName.localizedCaseInsensitiveCompare(name) == .orderedSame
@@ -325,6 +325,11 @@ enum AIConflictDetector {
             // ── Analysis & creation (no conflict checks needed) ──
             case .analyze, .compare, .forecast, .advice,
                  .createGoal, .addSubscription, .addRecurring, .editRecurring:
+                break
+
+            // ── Goal lifecycle (added by Goals Rebuild; no conflict checks
+            // beyond what GoalManager validates at execution time) ──
+            default:
                 break
             }
 
@@ -417,13 +422,18 @@ enum AIConflictDetector {
         case .addTransaction, .editTransaction, .deleteTransaction,
              .splitTransaction, .setBudget, .adjustBudget, .setCategoryBudget,
              .createGoal, .addContribution, .addSubscription,
-             .addRecurring, .editRecurring:
+             .addRecurring, .editRecurring,
+             .pauseSubscription:  // pause is reversible via Resume
             return true
         case .cancelSubscription, .cancelRecurring, .updateGoal,
              .updateBalance, .transfer:
             return false // Harder to reverse cleanly
         case .analyze, .compare, .forecast, .advice:
             return true // No-op, nothing to reverse
+        default:
+            // Goal lifecycle (.pauseGoal/.archiveGoal/.withdrawFromGoal):
+            // conservative default — assume not cleanly reversible.
+            return false
         }
     }
 

@@ -184,12 +184,12 @@ struct UpcomingPaymentRow: View {
                 // Category
                 ZStack {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(recurring.category.tint.opacity(0.12))
+                        .fill(CategoryRegistry.shared.tint(for: recurring.category).opacity(0.12))
                         .frame(width: 42, height: 42)
                     
-                    Image(systemName: recurring.category.icon)
+                    Image(systemName: CategoryRegistry.shared.icon(for: recurring.category))
                         .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(recurring.category.tint)
+                        .foregroundStyle(CategoryRegistry.shared.tint(for: recurring.category))
                 }
                 
                 // Info

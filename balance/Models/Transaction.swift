@@ -120,8 +120,14 @@ struct Transaction: Identifiable, Hashable, Codable {
     var isFlagged: Bool
     var linkedGoalId: UUID?
     var lastModified: Date
+    /// When set, this transaction is one leg of a transfer between two accounts.
+    /// Both legs share the same group id. Filter `transferGroupId == nil` from
+    /// income/expense roll-ups so transfers don't double-count.
+    var transferGroupId: UUID?
 
-    init(id: UUID = UUID(), amount: Int, date: Date, category: Category, note: String, paymentMethod: PaymentMethod = .card, type: TransactionType = .expense, attachmentData: Data? = nil, attachmentType: AttachmentType? = nil, accountId: UUID? = nil, isFlagged: Bool = false, linkedGoalId: UUID? = nil, lastModified: Date = Date()) {
+    var isTransfer: Bool { transferGroupId != nil }
+
+    init(id: UUID = UUID(), amount: Int, date: Date, category: Category, note: String, paymentMethod: PaymentMethod = .card, type: TransactionType = .expense, attachmentData: Data? = nil, attachmentType: AttachmentType? = nil, accountId: UUID? = nil, isFlagged: Bool = false, linkedGoalId: UUID? = nil, lastModified: Date = Date(), transferGroupId: UUID? = nil) {
         self.id = id
         self.amount = amount
         self.date = date
@@ -135,10 +141,11 @@ struct Transaction: Identifiable, Hashable, Codable {
         self.isFlagged = isFlagged
         self.linkedGoalId = linkedGoalId
         self.lastModified = lastModified
+        self.transferGroupId = transferGroupId
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, amount, date, category, note, paymentMethod, type, attachmentData, attachmentType, accountId, isFlagged, linkedGoalId, lastModified
+        case id, amount, date, category, note, paymentMethod, type, attachmentData, attachmentType, accountId, isFlagged, linkedGoalId, lastModified, transferGroupId
     }
 
     init(from decoder: Decoder) throws {
@@ -158,6 +165,7 @@ struct Transaction: Identifiable, Hashable, Codable {
         isFlagged = try container.decodeIfPresent(Bool.self, forKey: .isFlagged) ?? false
         linkedGoalId = try container.decodeIfPresent(UUID.self, forKey: .linkedGoalId)
         lastModified = try container.decodeIfPresent(Date.self, forKey: .lastModified) ?? date
+        transferGroupId = try container.decodeIfPresent(UUID.self, forKey: .transferGroupId)
     }
 }
 

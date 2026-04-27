@@ -13,36 +13,33 @@ struct PlanningInsightsDashboardCard: View {
                 VStack(alignment: .leading, spacing: 0) {
 
                     // ── Header ──
-                    HStack(spacing: 8) {
+                    HStack(spacing: 10) {
                         Image(systemName: "lightbulb.fill")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(DS.Colors.warning)
-                            .frame(width: 34, height: 34)
-                            .background(DS.Colors.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .frame(width: 32, height: 32)
+                            .background(DS.Colors.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
 
-                        VStack(alignment: .leading, spacing: 1) {
+                        VStack(alignment: .leading, spacing: 2) {
                             Text("Planning Insights")
                                 .font(.system(size: 14, weight: .semibold, design: .rounded))
                                 .foregroundStyle(DS.Colors.text)
-                            Text("\(insights.count) item\(insights.count == 1 ? "" : "s") need attention")
+                            Text(subtitleText(count: insights.count))
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(DS.Colors.subtext)
                         }
 
                         Spacer()
 
-                        // Severity badge — show highest level
-                        let topColor = insights.first?.color ?? DS.Colors.warning
-                        Circle()
-                            .fill(topColor.opacity(0.15))
-                            .frame(width: 28, height: 28)
-                            .overlay(
-                                Image(systemName: insights.first?.icon ?? "exclamationmark")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(topColor)
-                            )
+                        // Count pill (replaces redundant severity circle)
+                        Text("\(insights.count)")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(DS.Colors.subtext)
+                            .frame(minWidth: 22, minHeight: 22)
+                            .padding(.horizontal, 6)
+                            .background(DS.Colors.surface2, in: Capsule())
                     }
-                    .padding(.bottom, 12)
+                    .padding(.bottom, 14)
 
                     // ── Insight rows ──
                     VStack(alignment: .leading, spacing: 0) {
@@ -51,7 +48,7 @@ struct PlanningInsightsDashboardCard: View {
                                 Rectangle()
                                     .fill(DS.Colors.grid.opacity(0.6))
                                     .frame(height: 0.5)
-                                    .padding(.leading, 36)
+                                    .padding(.leading, 40)
                             }
                             insightRow(insight)
                         }
@@ -64,18 +61,13 @@ struct PlanningInsightsDashboardCard: View {
     // MARK: - Insight Row
 
     private func insightRow(_ insight: PlanningInsight) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            // Color bar
-            RoundedRectangle(cornerRadius: 2)
-                .fill(insight.color)
-                .frame(width: 3, height: 36)
-
-            // Icon
+        HStack(alignment: .top, spacing: 12) {
+            // Icon tile (single visual anchor — color bar removed)
             Image(systemName: insight.icon)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(insight.color)
-                .frame(width: 22, height: 22)
-                .background(insight.color.opacity(0.1), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .frame(width: 28, height: 28)
+                .background(insight.color.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .padding(.top, 1)
 
             // Text
@@ -83,7 +75,8 @@ struct PlanningInsightsDashboardCard: View {
                 Text(insight.title)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(DS.Colors.text)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Text(insight.detail)
                     .font(.system(size: 11))
@@ -92,19 +85,28 @@ struct PlanningInsightsDashboardCard: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 if let action = insight.actionLabel {
-                    Text(action)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(insight.color)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(insight.color.opacity(0.1), in: Capsule())
-                        .padding(.top, 2)
+                    HStack(spacing: 3) {
+                        Text(action)
+                            .font(.system(size: 10, weight: .bold))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundStyle(insight.color)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(insight.color.opacity(0.12), in: Capsule())
+                    .padding(.top, 3)
                 }
             }
 
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 10)
+        .padding(.vertical, 12)
+    }
+
+    private func subtitleText(count: Int) -> String {
+        if count == 1 { return "1 item needs attention" }
+        return "\(count) items need attention"
     }
 
     // MARK: - Build Insights

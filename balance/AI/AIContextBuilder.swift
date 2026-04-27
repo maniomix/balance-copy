@@ -13,6 +13,7 @@ import Foundation
 enum AIContextBuilder {
 
     /// Build a full financial context string from the current app state.
+    /// Includes current month detail + historical summaries for past 6 months.
     @MainActor
     static func build(store: Store) -> String {
         var sections: [String] = []
@@ -20,6 +21,7 @@ enum AIContextBuilder {
         sections.append(budgetSection(store: store))
         sections.append(transactionSection(store: store))
         sections.append(categoryBreakdown(store: store))
+        sections.append(historicalSummary(store: store))
         sections.append(goalSection())
         sections.append(accountSection())
         sections.append(subscriptionSection())
@@ -60,25 +62,51 @@ enum AIContextBuilder {
         return lines.joined(separator: "\n")
     }
 
-    // MARK: - Transactions (recent)
+    // MARK: - Transactions (recent + last month)
 
     private static func transactionSection(store: Store) -> String {
+        let cal = Calendar.current
         let month = store.selectedMonth
-        let txns = store.transactions
-            .filter { Calendar.current.isDate($0.date, equalTo: month, toGranularity: .month) }
+
+        // Current month transactions
+        let currentTxns = store.transactions
+            .filter { cal.isDate($0.date, equalTo: month, toGranularity: .month) }
             .sorted { $0.date > $1.date }
 
-        guard !txns.isEmpty else { return "" }
+        var lines: [String] = []
 
-        let recent = txns.prefix(15)
-        var lines = ["RECENT TRANSACTIONS (showing \(recent.count) of \(txns.count) this month)"]
-        for t in recent {
-            let typeTag = t.type == .income ? "+" : "-"
-            let dateStr = shortDate(t.date)
-            let cat = t.category.storageKey
-            let note = t.note.isEmpty ? "" : " — \(t.note)"
-            lines.append("  \(dateStr) \(typeTag)\(cents(t.amount)) [\(cat)]\(note) id:\(t.id.uuidString)")
+        if !currentTxns.isEmpty {
+            let recent = currentTxns.prefix(15)
+            lines.append("RECENT TRANSACTIONS — \(monthKey(for: month)) (showing \(recent.count) of \(currentTxns.count))")
+            for t in recent {
+                let typeTag = t.type == .income ? "+" : "-"
+                let dateStr = shortDate(t.date)
+                let cat = t.category.storageKey
+                let note = t.note.isEmpty ? "" : " — \(t.note)"
+                lines.append("  \(dateStr) \(typeTag)\(cents(t.amount)) [\(cat)]\(note) id:\(t.id.uuidString)")
+            }
         }
+
+        // Previous month transactions (compact — last 10)
+        if let prevMonth = cal.date(byAdding: .month, value: -1, to: month) {
+            let prevTxns = store.transactions
+                .filter { cal.isDate($0.date, equalTo: prevMonth, toGranularity: .month) }
+                .sorted { $0.date > $1.date }
+
+            if !prevTxns.isEmpty {
+                let recent = prevTxns.prefix(10)
+                if !lines.isEmpty { lines.append("") }
+                lines.append("LAST MONTH TRANSACTIONS — \(monthKey(for: prevMonth)) (showing \(recent.count) of \(prevTxns.count))")
+                for t in recent {
+                    let typeTag = t.type == .income ? "+" : "-"
+                    let dateStr = shortDate(t.date)
+                    let cat = t.category.storageKey
+                    let note = t.note.isEmpty ? "" : " — \(t.note)"
+                    lines.append("  \(dateStr) \(typeTag)\(cents(t.amount)) [\(cat)]\(note) id:\(t.id.uuidString)")
+                }
+            }
+        }
+
         return lines.joined(separator: "\n")
     }
 
@@ -87,7 +115,7 @@ enum AIContextBuilder {
     private static func categoryBreakdown(store: Store) -> String {
         let month = store.selectedMonth
         let expenses = store.transactions.filter {
-            $0.type == .expense &&
+            $0.type == .expense && !$0.isTransfer &&
             Calendar.current.isDate($0.date, equalTo: month, toGranularity: .month)
         }
 
@@ -103,6 +131,63 @@ enum AIContextBuilder {
         for (cat, amount) in sorted {
             lines.append("  \(cat): \(cents(amount))")
         }
+        return lines.joined(separator: "\n")
+    }
+
+    // MARK: - Historical Summary (Past Months)
+
+    private static func historicalSummary(store: Store) -> String {
+        let cal = Calendar.current
+        let currentMonth = store.selectedMonth
+
+        // Group all transactions by month
+        var monthlyData: [(key: String, spent: Int, income: Int, topCategories: [(String, Int)], txnCount: Int)] = []
+
+        for offset in 1...6 {
+            guard let month = cal.date(byAdding: .month, value: -offset, to: currentMonth) else { continue }
+            let mk = monthKey(for: month)
+
+            let monthTxns = store.transactions.filter {
+                cal.isDate($0.date, equalTo: month, toGranularity: .month)
+            }
+
+            guard !monthTxns.isEmpty else { continue }
+
+            let spent = monthTxns.filter { $0.type == .expense && !$0.isTransfer }.reduce(0) { $0 + $1.amount }
+            let income = monthTxns.filter { $0.type == .income && !$0.isTransfer }.reduce(0) { $0 + $1.amount }
+
+            // Top 3 categories
+            var catTotals: [String: Int] = [:]
+            for t in monthTxns where t.type == .expense && !t.isTransfer {
+                catTotals[t.category.storageKey, default: 0] += t.amount
+            }
+            let topCats = catTotals.sorted { $0.value > $1.value }.prefix(3).map { ($0.key, $0.value) }
+
+            monthlyData.append((key: mk, spent: spent, income: income, topCategories: topCats, txnCount: monthTxns.count))
+        }
+
+        guard !monthlyData.isEmpty else { return "" }
+
+        var lines = ["HISTORICAL SUMMARY (past months)"]
+        for m in monthlyData {
+            let budget = store.budgetsByMonth[m.key] ?? 0
+            var line = "  \(m.key): spent \(cents(m.spent))"
+            if m.income > 0 { line += ", income \(cents(m.income))" }
+            if budget > 0 { line += ", budget \(cents(budget))" }
+            line += " (\(m.txnCount) transactions)"
+            lines.append(line)
+
+            if !m.topCategories.isEmpty {
+                let catStr = m.topCategories.map { "\($0.0): \(cents($0.1))" }.joined(separator: ", ")
+                lines.append("    top: \(catStr)")
+            }
+        }
+
+        // Add 6-month averages
+        let totalSpent = monthlyData.reduce(0) { $0 + $1.spent }
+        let avgSpent = totalSpent / max(monthlyData.count, 1)
+        lines.append("  Average monthly spending: \(cents(avgSpent))")
+
         return lines.joined(separator: "\n")
     }
 
@@ -131,16 +216,31 @@ enum AIContextBuilder {
 
     @MainActor
     private static func accountSection() -> String {
-        let accounts = AccountManager.shared.accounts.filter { !$0.isArchived }
+        let manager = AccountManager.shared
+        let accounts = manager.activeAccounts
         guard !accounts.isEmpty else { return "" }
+
+        let appCurrency = UserDefaults.standard.string(forKey: "app.currency") ?? "EUR"
+        let household = HouseholdManager.shared
 
         var lines = ["ACCOUNTS"]
         for a in accounts {
-            lines.append("  \(a.name) (\(a.type.rawValue)): \(String(format: "%.2f", a.currentBalance)) \(a.currency)")
+            var detail = "  \(a.name) (\(a.type.rawValue)): \(String(format: "%.2f", a.currentBalance)) \(a.currency)"
+            var tags: [String] = []
+            if !a.includeInNetWorth { tags.append("excluded") }
+            if a.currency != appCurrency { tags.append("fx") }
+            if a.type == .creditCard, let limit = a.creditLimit, limit > 0 {
+                let used = abs(a.currentBalance) / limit
+                tags.append("util \(Int(used * 100))%")
+            }
+            if household.isAccountShared(a.id) { tags.append("shared") }
+            if !tags.isEmpty { detail += " [\(tags.joined(separator: ", "))]" }
+            lines.append(detail)
         }
 
-        let netWorth = AccountManager.shared.netWorth
-        lines.append("  Net worth: \(String(format: "$%.2f", netWorth))")
+        lines.append("  Assets: \(String(format: "%.2f", manager.convertedTotalAssets)) \(appCurrency)")
+        lines.append("  Liabilities: \(String(format: "%.2f", manager.convertedTotalLiabilities)) \(appCurrency)")
+        lines.append("  Net worth: \(String(format: "%.2f", manager.convertedNetWorth)) \(appCurrency)")
 
         return lines.joined(separator: "\n")
     }
@@ -220,15 +320,23 @@ enum AIContextBuilder {
     // MARK: - Focused Builders (for Intent Router)
 
     @MainActor
+    static func buildMinimal(store: Store) -> String {
+        // Even for minimal context, include a brief financial snapshot
+        [budgetSection(store: store), historicalSummary(store: store)]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+    }
+
+    @MainActor
     static func buildBudgetOnly(store: Store) -> String {
-        [budgetSection(store: store), categoryBreakdown(store: store)]
+        [budgetSection(store: store), categoryBreakdown(store: store), historicalSummary(store: store)]
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
     }
 
     @MainActor
     static func buildTransactionsOnly(store: Store) -> String {
-        [transactionSection(store: store), categoryBreakdown(store: store)]
+        [transactionSection(store: store), categoryBreakdown(store: store), historicalSummary(store: store)]
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
     }

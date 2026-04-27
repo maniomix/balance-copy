@@ -193,7 +193,7 @@ struct SplitExpenseView: View {
                 // Category picker
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(Category.allCases, id: \.self) { cat in
+                        ForEach(store.allCategories, id: \.self) { cat in
                             let isSelected = selectedCategory == cat
                             Button {
                                 selectedCategory = cat

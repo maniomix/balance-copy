@@ -153,25 +153,84 @@ class AIUserPreferences: ObservableObject {
     func contextSummary() -> String {
         var parts: [String] = []
 
-        parts.append("User language: \(preferredLanguage)")
+        // Language preference — guides response language
+        parts.append("User language: \(preferredLanguage) (\(languageDetail))")
 
+        // Spending categories — ranked with counts
         if !topCategories.isEmpty {
-            parts.append("Top spending categories: \(topCategories.joined(separator: ", "))")
+            let ranked = topCategories.prefix(5).compactMap { cat -> String? in
+                guard let count = categoryCounts[cat] else { return cat }
+                return "\(cat)(\(count)x)"
+            }
+            parts.append("Top spending categories: \(ranked.joined(separator: ", "))")
         }
+
+        // Amount context — helps model pick reasonable defaults
         if averageExpense > 0 {
             let avg = String(format: "$%.2f", Double(averageExpense) / 100.0)
-            parts.append("Average expense: \(avg)")
+            parts.append("Average expense: \(avg) (\(expenseCount) total transactions)")
         }
         if typicalBudget > 0 {
             let budget = String(format: "$%.2f", Double(typicalBudget) / 100.0)
             parts.append("Typical monthly budget: \(budget)")
         }
+
+        // Spending timing patterns
         if let peak = spendingPeakDay {
             let dayName = Calendar.current.weekdaySymbols[peak - 1]
             parts.append("Spends most on: \(dayName)s")
         }
 
+        // Common interaction patterns — what the user usually asks about
+        let promptPatterns = extractPromptPatterns()
+        if !promptPatterns.isEmpty {
+            parts.append("Common requests: \(promptPatterns.joined(separator: ", "))")
+        }
+
         return parts.isEmpty ? "" : "USER PREFERENCES\n" + parts.joined(separator: "\n")
+    }
+
+    /// Detect what kinds of things the user typically asks about.
+    private var languageDetail: String {
+        let total = languageCounts.values.reduce(0, +)
+        guard total > 0 else { return "default" }
+        let sorted = languageCounts.sorted { $0.value > $1.value }
+        if sorted.count == 1 { return "always" }
+        let top = sorted[0]
+        let pct = Int(Double(top.value) / Double(total) * 100)
+        return "\(pct)% of messages"
+    }
+
+    /// Extract high-level patterns from common prompts.
+    private func extractPromptPatterns() -> [String] {
+        guard commonPrompts.count >= 3 else { return [] }
+
+        var patterns: [String: Int] = [:]
+        let keywords: [(pattern: String, label: String)] = [
+            ("add|اضافه|بزن", "adding transactions"),
+            ("budget|بودجه", "budget management"),
+            ("goal|هدف|پس.انداز", "goals & savings"),
+            ("how much|چقد|spending|خرج", "spending analysis"),
+            ("compare|مقایسه|بهتر", "comparisons"),
+            ("tip|advice|پیشنهاد|توصیه", "seeking advice"),
+            ("subscription|اشتراک", "subscriptions"),
+            ("delete|حذف|cancel|لغو", "removing items"),
+        ]
+
+        for prompt in commonPrompts {
+            let lower = prompt.lowercased()
+            for (pattern, label) in keywords {
+                if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+                   regex.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)) != nil {
+                    patterns[label, default: 0] += 1
+                }
+            }
+        }
+
+        return patterns
+            .sorted { $0.value > $1.value }
+            .prefix(3)
+            .map(\.key)
     }
 
     // MARK: - Language Detection

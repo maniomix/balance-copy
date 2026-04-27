@@ -38,9 +38,12 @@ struct RecurringTransactionsCard: View {
                     
                     // Content
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Recurring Transactions")
-                            .font(.system(size: 15, weight: .semibold, design: .rounded))
-                            .foregroundStyle(DS.Colors.text)
+                        HStack(spacing: 6) {
+                            Text("Recurring Transactions")
+                                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                .foregroundStyle(DS.Colors.text)
+                            DS.BetaBadge()
+                        }
                         
                         if activeCount > 0 {
                             HStack(spacing: 8) {
@@ -55,7 +58,7 @@ struct RecurringTransactionsCard: View {
                             }
                             .foregroundStyle(DS.Colors.subtext)
                         } else {
-                            Text("Automate your regular expenses")
+                            Text("Auto-detected from your transactions")
                                 .font(.system(size: 12))
                                 .foregroundStyle(DS.Colors.subtext)
                         }

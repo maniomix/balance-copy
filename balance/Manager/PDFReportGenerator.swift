@@ -130,8 +130,8 @@ struct PDFReportGenerator {
               let monthEnd = cal.date(byAdding: .month, value: 1, to: monthStart) else { return }
 
         let monthTx = store.transactions.filter { $0.date >= monthStart && $0.date < monthEnd }
-        let expenses = monthTx.filter { $0.type == .expense }
-        let income = monthTx.filter { $0.type == .income }
+        let expenses = monthTx.filter { $0.type == .expense && !$0.isTransfer }
+        let income = monthTx.filter { $0.type == .income && !$0.isTransfer }
 
         let totalExpense = expenses.reduce(0) { $0 + $1.amount }
         let totalIncome = income.reduce(0) { $0 + $1.amount }
@@ -209,8 +209,8 @@ struct PDFReportGenerator {
                   let end = cal.date(byAdding: .month, value: 1, to: start) else { continue }
 
             let monthTx = store.transactions.filter { $0.date >= start && $0.date < end }
-            let exp = monthTx.filter { $0.type == .expense }.reduce(0) { $0 + $1.amount }
-            let inc = monthTx.filter { $0.type == .income }.reduce(0) { $0 + $1.amount }
+            let exp = monthTx.filter { $0.type == .expense && !$0.isTransfer }.reduce(0) { $0 + $1.amount }
+            let inc = monthTx.filter { $0.type == .income && !$0.isTransfer }.reduce(0) { $0 + $1.amount }
 
             let label = monthFmt.string(from: start)
             monthlyExpenses.append((label, exp))
@@ -260,7 +260,7 @@ struct PDFReportGenerator {
         y += 15
 
         let yearTx = store.transactions.filter {
-            cal.component(.year, from: $0.date) == year && $0.type == .expense
+            cal.component(.year, from: $0.date) == year && $0.type == .expense && !$0.isTransfer
         }
         var catMap: [String: Int] = [:]
         for tx in yearTx { catMap[tx.category.title, default: 0] += tx.amount }
@@ -277,7 +277,7 @@ struct PDFReportGenerator {
     // =====================================================================
 
     private static func drawCategoryReport(ctx: UIGraphicsPDFRendererContext, pageRect: CGRect, store: Store, start: Date, end: Date, currency: String) {
-        let expenses = store.transactions.filter { $0.type == .expense && $0.date >= start && $0.date < end }
+        let expenses = store.transactions.filter { $0.type == .expense && !$0.isTransfer && $0.date >= start && $0.date < end }
 
         let dateFmt = DateFormatter()
         dateFmt.dateFormat = "MMM d, yyyy"
@@ -356,8 +356,8 @@ struct PDFReportGenerator {
         ctx.beginPage()
         var y = drawHeader(ctx: ctx.cgContext, pageRect: pageRect, title: "Cash Flow Report", subtitle: "\(dateFmt.string(from: start)) – \(dateFmt.string(from: end))")
 
-        let totalIncome = txs.filter { $0.type == .income }.reduce(0) { $0 + $1.amount }
-        let totalExpense = txs.filter { $0.type == .expense }.reduce(0) { $0 + $1.amount }
+        let totalIncome = txs.filter { $0.type == .income && !$0.isTransfer }.reduce(0) { $0 + $1.amount }
+        let totalExpense = txs.filter { $0.type == .expense && !$0.isTransfer }.reduce(0) { $0 + $1.amount }
         let netFlow = totalIncome - totalExpense
 
         y = drawKPIRow(ctx: ctx.cgContext, y: y, items: [
@@ -384,8 +384,8 @@ struct PDFReportGenerator {
             let effectiveEnd = min(monthEnd, end)
             let monthTx = txs.filter { $0.date >= current && $0.date < effectiveEnd }
 
-            let inc = monthTx.filter { $0.type == .income }.reduce(0) { $0 + $1.amount }
-            let exp = monthTx.filter { $0.type == .expense }.reduce(0) { $0 + $1.amount }
+            let inc = monthTx.filter { $0.type == .income && !$0.isTransfer }.reduce(0) { $0 + $1.amount }
+            let exp = monthTx.filter { $0.type == .expense && !$0.isTransfer }.reduce(0) { $0 + $1.amount }
 
             monthData.append((monthFmt.string(from: current), inc, exp))
             current = monthEnd

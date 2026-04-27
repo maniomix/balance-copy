@@ -228,3 +228,23 @@ CREATE INDEX IF NOT EXISTS idx_settlements_household ON settlements(household_id
 CREATE INDEX IF NOT EXISTS idx_shared_budgets_household_month ON shared_budgets(household_id, month_key);
 CREATE INDEX IF NOT EXISTS idx_shared_goals_household ON shared_goals(household_id);
 CREATE INDEX IF NOT EXISTS idx_households_invite_code ON households(invite_code);
+
+-- ============================================================
+-- MIGRATION: macOS Household port — Phase 1 (additive)
+-- ============================================================
+-- Safe to re-run. All columns are nullable / have defaults so
+-- existing rows continue to work unchanged.
+-- ============================================================
+
+-- Households: sub-group definitions (parents / kids / roommates).
+ALTER TABLE households
+    ADD COLUMN IF NOT EXISTS groups_json JSONB DEFAULT '[]';
+
+-- Household members: archive lifecycle + group membership.
+ALTER TABLE household_members
+    ADD COLUMN IF NOT EXISTS is_active   BOOLEAN     NOT NULL DEFAULT true,
+    ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS group_ids   JSONB       DEFAULT '[]';
+
+-- Role allowlist now includes adult + child (in addition to owner/partner/viewer).
+-- No DB constraint on role — validation lives in the app — so no ALTER needed.

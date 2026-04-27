@@ -16,6 +16,26 @@ struct HouseholdOverviewView: View {
     @State private var showSettleUp = false
     @State private var showSetBudget = false
     @State private var showPartnerActivity = false
+    @State private var selectedTab: HubTab = .overview
+    @State private var memberPendingDelete: HouseholdMember?
+    @State private var showGroupSheet = false
+    @State private var editingGroup: HouseholdGroup?
+    @State private var nudgeShareItems: [Any] = []
+    @State private var showNudgeShare = false
+
+    /// 4-tab hub layout ported from macOS Household hub.
+    enum HubTab: String, CaseIterable, Identifiable {
+        case overview, splits, settlements, members
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .overview:    return "Overview"
+            case .splits:      return "Splits"
+            case .settlements: return "Settle"
+            case .members:     return "Members"
+            }
+        }
+    }
 
     private var monthKey: String { Store.monthKey(store.selectedMonth) }
     private var currentUserId: String { authManager.currentUser?.uid ?? "" }
@@ -25,12 +45,22 @@ struct HouseholdOverviewView: View {
             VStack(spacing: 14) {
                 if let h = manager.household {
                     householdHeader(h)
-                    balanceSummaryCard(h)
-                    sharedBudgetCard(h)
-                    recentSplitsCard(h)
-                    settlementHistoryCard(h)
-                    sharedGoalsCard(h)
-                    membersCard(h)
+                    hubTabBar
+                    switch selectedTab {
+                    case .overview:
+                        balanceSummaryCard(h)
+                        pairBalancesCard(h)
+                        sharedBudgetCard(h)
+                    case .splits:
+                        recentSplitsCard(h)
+                    case .settlements:
+                        pairBalancesCard(h, forceShow: true)
+                        settlementHistoryCard(h)
+                    case .members:
+                        membersCard(h)
+                        groupsCard(h)
+                        sharedGoalsCard(h)
+                    }
                 } else {
                     emptyState
                 }
@@ -84,6 +114,26 @@ struct HouseholdOverviewView: View {
         .sheet(isPresented: $showSettleUp) { SettleUpSheet() }
         .sheet(isPresented: $showSetBudget) { SharedBudgetSheet(monthKey: monthKey) }
         .sheet(isPresented: $showPartnerActivity) { PartnerActivitySheet(store: $store) }
+        .sheet(isPresented: $showGroupSheet) {
+            HouseholdGroupSheet(editingGroup: editingGroup)
+                .onDisappear { editingGroup = nil }
+        }
+        .sheet(isPresented: $showNudgeShare) {
+            HouseholdNudgeShareSheet(items: nudgeShareItems)
+        }
+    }
+
+    // MARK: - Tab Bar
+
+    /// Segmented picker ported from macOS Household hub. Sits below the header.
+    private var hubTabBar: some View {
+        Picker("Household section", selection: $selectedTab) {
+            ForEach(HubTab.allCases) { tab in
+                Text(tab.title).tag(tab)
+            }
+        }
+        .pickerStyle(.segmented)
+        .accessibilityLabel("Household section")
     }
 
     // MARK: - Empty State
@@ -216,6 +266,99 @@ struct HouseholdOverviewView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Pair Balances ("Who Owes Who")
+
+    /// Multi-member "who owes who" panel. Rendered only for 3+ member households
+    /// since the Balance Summary already covers the 2-member case. Uses the
+    /// clamp-safe `openPairBalances()` helper ported from macOS.
+    @ViewBuilder
+    private func pairBalancesCard(_ h: Household, forceShow: Bool = false) -> some View {
+        if forceShow || h.members.count >= 3 {
+            let pairs = manager.openPairBalances()
+            DS.Card {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("Who Owes Who")
+                            .font(DS.Typography.section)
+                            .foregroundStyle(DS.Colors.text)
+                        Spacer()
+                        if pairs.isEmpty {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(DS.Colors.positive)
+                        }
+                    }
+                    if pairs.isEmpty {
+                        Text("All settled across the household.")
+                            .font(DS.Typography.body)
+                            .foregroundStyle(DS.Colors.subtext)
+                    } else {
+                        ForEach(pairs) { pair in
+                            pairRow(pair)
+                            if pair.id != pairs.last?.id {
+                                Divider()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Pair Row + Nudge
+
+    @ViewBuilder
+    private func pairRow(_ pair: HouseholdManager.PairBalance) -> some View {
+        let isCreditor = pair.creditor.userId == currentUserId
+        HStack(spacing: 10) {
+            memberAvatar(pair.debtor, size: 28)
+            Text(pair.debtor.displayName)
+                .font(DS.Typography.body.weight(.medium))
+                .foregroundStyle(DS.Colors.text)
+            Image(systemName: "arrow.right")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(DS.Colors.subtext)
+            memberAvatar(pair.creditor, size: 28)
+            Text(pair.creditor.displayName)
+                .font(DS.Typography.body.weight(.medium))
+                .foregroundStyle(DS.Colors.text)
+            Spacer()
+            Text(DS.Format.money(pair.amount))
+                .font(DS.Typography.number)
+                .foregroundStyle(DS.Colors.danger)
+            if isCreditor {
+                Menu {
+                    Button {
+                        let msg = buildNudgeMessage(pair: pair)
+                        UIPasteboard.general.string = msg
+                        Haptics.success()
+                    } label: {
+                        Label("Copy Reminder", systemImage: "doc.on.doc")
+                    }
+                    Button {
+                        nudgeShareItems = [buildNudgeMessage(pair: pair)]
+                        showNudgeShare = true
+                    } label: {
+                        Label("Share…", systemImage: "square.and.arrow.up")
+                    }
+                } label: {
+                    Image(systemName: "bell.badge")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(DS.Colors.accent)
+                        .padding(.leading, 2)
+                }
+                .accessibilityLabel("Nudge \(pair.debtor.displayName)")
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(pair.debtor.displayName) owes \(pair.creditor.displayName) \(DS.Format.money(pair.amount))")
+    }
+
+    /// Templated reminder. Ported from macOS Household nudge-message template.
+    private func buildNudgeMessage(pair: HouseholdManager.PairBalance) -> String {
+        let amount = DS.Format.money(pair.amount)
+        return "Hey \(pair.debtor.displayName) — friendly reminder about the \(amount) from our shared splits. Settle up whenever works for you 👍"
     }
 
     // MARK: - Shared Budget
@@ -563,40 +706,7 @@ struct HouseholdOverviewView: View {
                     .foregroundStyle(DS.Colors.text)
 
                 ForEach(h.members) { member in
-                    HStack(spacing: 10) {
-                        memberAvatar(member, size: 36)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text(member.displayName)
-                                    .font(DS.Typography.body.weight(.medium))
-                                    .foregroundStyle(DS.Colors.text)
-                                if member.userId == currentUserId {
-                                    Text("You")
-                                        .font(.system(size: 9, weight: .semibold))
-                                        .foregroundStyle(.white)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(DS.Colors.accent, in: Capsule())
-                                }
-                            }
-                            HStack(spacing: 4) {
-                                Image(systemName: member.role.icon)
-                                    .font(.system(size: 9))
-                                Text(member.role.displayName)
-                                    .font(DS.Typography.caption)
-                            }
-                            .foregroundStyle(DS.Colors.subtext)
-                        }
-
-                        Spacer()
-
-                        if !member.shareTransactions {
-                            Image(systemName: "lock.fill")
-                                .font(.system(size: 11))
-                                .foregroundStyle(DS.Colors.subtext)
-                        }
-                    }
+                    memberRow(member, household: h)
                 }
 
                 // Invite button (owner & partner only)
@@ -613,6 +723,195 @@ struct HouseholdOverviewView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Groups
+
+    @ViewBuilder
+    private func groupsCard(_ h: Household) -> some View {
+        let canEdit = h.canEdit(userId: currentUserId)
+        DS.Card {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Groups")
+                        .font(DS.Typography.section)
+                        .foregroundStyle(DS.Colors.text)
+                    Spacer()
+                    if canEdit {
+                        Button {
+                            Haptics.light()
+                            editingGroup = nil
+                            showGroupSheet = true
+                        } label: {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 18))
+                                .foregroundStyle(DS.Colors.accent)
+                        }
+                        .accessibilityLabel("Add group")
+                    }
+                }
+
+                if h.groups.isEmpty {
+                    Text("No groups yet. Use groups to separate members (Parents, Kids, Roommates).")
+                        .font(DS.Typography.caption)
+                        .foregroundStyle(DS.Colors.subtext)
+                } else {
+                    ForEach(h.groups) { group in
+                        Button {
+                            editingGroup = group
+                            showGroupSheet = true
+                        } label: {
+                            HStack(spacing: 10) {
+                                Circle()
+                                    .fill(Color(hexValue: UInt32(group.colorHex, radix: 16) ?? 0x3DB9FC))
+                                    .frame(width: 14, height: 14)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(group.name)
+                                        .font(DS.Typography.body.weight(.medium))
+                                        .foregroundStyle(DS.Colors.text)
+                                    Text("\(group.memberIds.count) member\(group.memberIds.count == 1 ? "" : "s")")
+                                        .font(DS.Typography.caption)
+                                        .foregroundStyle(DS.Colors.subtext)
+                                }
+                                Spacer()
+                                if canEdit {
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(DS.Colors.subtext)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!canEdit)
+                        .accessibilityLabel("\(group.name) group, \(group.memberIds.count) members")
+                        .accessibilityHint(canEdit ? "Double-tap to edit" : "")
+                        if group.id != h.groups.last?.id {
+                            Divider()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Member Row (archive / delete / restore)
+
+    @ViewBuilder
+    private func memberRow(_ member: HouseholdMember, household h: Household) -> some View {
+        let isSelf = member.userId == currentUserId
+        let canManage = h.canEdit(userId: currentUserId)
+            && currentMember()?.role.canManageMembers == true
+            && !isSelf
+            && member.role != .owner
+        let hasHistory = manager.hasLedgerHistory(for: member.userId)
+
+        HStack(spacing: 10) {
+            memberAvatar(member, size: 36)
+                .opacity(member.isActive ? 1.0 : 0.4)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(member.displayName)
+                        .font(DS.Typography.body.weight(.medium))
+                        .foregroundStyle(member.isActive ? DS.Colors.text : DS.Colors.subtext)
+                        .strikethrough(!member.isActive, color: DS.Colors.subtext)
+                    if isSelf {
+                        Text("You")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(DS.Colors.accent, in: Capsule())
+                    }
+                    if !member.isActive {
+                        Text("Archived")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(DS.Colors.subtext)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(DS.Colors.subtext.opacity(0.15), in: Capsule())
+                    }
+                }
+                HStack(spacing: 4) {
+                    Image(systemName: member.role.icon)
+                        .font(.system(size: 9))
+                    Text(member.role.displayName)
+                        .font(DS.Typography.caption)
+                }
+                .foregroundStyle(DS.Colors.subtext)
+            }
+
+            Spacer()
+
+            if !member.shareTransactions {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DS.Colors.subtext)
+            }
+
+            if canManage {
+                Menu {
+                    if member.isActive {
+                        if hasHistory {
+                            Button {
+                                Haptics.light()
+                                manager.archiveMember(userId: member.userId)
+                            } label: {
+                                Label("Archive", systemImage: "archivebox")
+                            }
+                        } else {
+                            Button(role: .destructive) {
+                                memberPendingDelete = member
+                            } label: {
+                                Label("Remove", systemImage: "trash")
+                            }
+                        }
+                    } else {
+                        Button {
+                            Haptics.light()
+                            manager.restoreMember(userId: member.userId)
+                        } label: {
+                            Label("Restore", systemImage: "arrow.uturn.backward")
+                        }
+                        Button(role: .destructive) {
+                            memberPendingDelete = member
+                        } label: {
+                            Label("Remove Permanently", systemImage: "trash")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(DS.Colors.subtext)
+                }
+                .accessibilityLabel("Member actions for \(member.displayName)")
+            }
+        }
+        .confirmationDialog(
+            "Remove \(memberPendingDelete?.displayName ?? "member")?",
+            isPresented: Binding(
+                get: { memberPendingDelete?.id == member.id },
+                set: { if !$0 { memberPendingDelete = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: memberPendingDelete
+        ) { pending in
+            Button("Remove", role: .destructive) {
+                manager.removeMember(userId: pending.userId)
+                memberPendingDelete = nil
+            }
+            Button("Cancel", role: .cancel) { memberPendingDelete = nil }
+        } message: { _ in
+            if hasHistory {
+                Text("This will delete their ledger history too. Archive keeps the history intact.")
+            } else {
+                Text("This member has no splits or settlements. They'll be removed cleanly.")
+            }
+        }
+    }
+
+    private func currentMember() -> HouseholdMember? {
+        manager.household?.member(for: currentUserId)
     }
 
     // MARK: - Helpers
@@ -1248,85 +1547,299 @@ struct SettleUpSheet: View {
     @EnvironmentObject private var authManager: AuthManager
     @Environment(\.dismiss) private var dismiss
     @State private var note = ""
+    @State private var selectedCounterpartyId: String = ""
+    @State private var amountText: String = ""
+
+    private var currentUserId: String { authManager.currentUser?.uid ?? "" }
+
+    /// Counterparties (non-self active members). Excludes archived members so
+    /// settlements can't target ghost users.
+    private func counterparties(_ h: Household) -> [HouseholdMember] {
+        let base = h.activeMembers.isEmpty ? h.members : h.activeMembers
+        return base.filter { $0.userId != currentUserId }
+    }
+
+    private func balance(with counterpartyId: String) -> Int {
+        manager.netBalance(fromUser: currentUserId, toUser: counterpartyId)
+    }
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 20) {
-                if let h = manager.household,
-                   let partner = h.partner,
-                   let owner = h.owner {
-                    let currentUserId = authManager.currentUser?.uid ?? ""
-                    let otherUser = currentUserId == owner.userId ? partner : owner
-                    let balance = manager.netBalance(fromUser: currentUserId, toUser: otherUser.userId)
-
-                    Spacer().frame(height: 20)
-
-                    Image(systemName: "arrow.left.arrow.right.circle.fill")
-                        .font(.system(size: 48))
-                        .foregroundStyle(DS.Colors.accent)
-
-                    if balance > 0 {
-                        Text("You owe \(otherUser.displayName)")
-                            .font(DS.Typography.body)
-                            .foregroundStyle(DS.Colors.subtext)
-                        Text(DS.Format.money(balance))
-                            .font(.system(size: 36, weight: .bold, design: .rounded))
-                            .foregroundStyle(DS.Colors.danger)
-                    } else if balance < 0 {
-                        Text("\(otherUser.displayName) owes you")
-                            .font(DS.Typography.body)
-                            .foregroundStyle(DS.Colors.subtext)
-                        Text(DS.Format.money(abs(balance)))
-                            .font(.system(size: 36, weight: .bold, design: .rounded))
-                            .foregroundStyle(DS.Colors.positive)
-                    } else {
-                        Text("You're all settled up!")
-                            .font(.system(size: 20, weight: .bold, design: .rounded))
-                            .foregroundStyle(DS.Colors.positive)
-                    }
-
-                    TextField("Note (optional)", text: $note)
-                        .textFieldStyle(.roundedBorder)
-                        .padding(.horizontal, 24)
-
-                    if balance != 0 {
-                        Button {
-                            if balance > 0 {
-                                manager.settleUp(
-                                    fromUser: currentUserId,
-                                    toUser: otherUser.userId,
-                                    amount: balance,
-                                    note: note
-                                )
-                            } else {
-                                manager.settleUp(
-                                    fromUser: otherUser.userId,
-                                    toUser: currentUserId,
-                                    amount: abs(balance),
-                                    note: note
-                                )
-                            }
-                            Haptics.success()
-                            dismiss()
-                        } label: {
-                            Text("Mark as Settled")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(DS.PrimaryButton())
-                        .padding(.horizontal, 24)
-                    }
-
-                    Spacer()
+            if let h = manager.household {
+                let parties = counterparties(h)
+                if parties.isEmpty {
+                    emptyBody
                 } else {
-                    Text("No partner in household")
-                        .foregroundStyle(DS.Colors.subtext)
+                    form(household: h, parties: parties)
+                }
+            } else {
+                emptyBody
+            }
+        }
+    }
+
+    private var emptyBody: some View {
+        VStack {
+            Text("No one to settle up with")
+                .foregroundStyle(DS.Colors.subtext)
+        }
+        .navigationTitle("Settle Up")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Close") { dismiss() }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func form(household h: Household, parties: [HouseholdMember]) -> some View {
+        let activeId = selectedCounterpartyId.isEmpty
+            ? (parties.first?.userId ?? "")
+            : selectedCounterpartyId
+        let net = balance(with: activeId)
+        let defaultAmount = abs(net)
+        let parsedAmount = Int((Double(amountText) ?? 0) * 100)
+        let effectiveAmount = amountText.isEmpty ? defaultAmount : parsedAmount
+
+        VStack(spacing: 20) {
+            Spacer().frame(height: 12)
+
+            Image(systemName: "arrow.left.arrow.right.circle.fill")
+                .font(.system(size: 48))
+                .foregroundStyle(DS.Colors.accent)
+
+            if parties.count > 1 {
+                Picker("Settle with", selection: Binding(
+                    get: { activeId },
+                    set: {
+                        selectedCounterpartyId = $0
+                        amountText = ""
+                    }
+                )) {
+                    ForEach(parties) { m in
+                        Text(m.displayName).tag(m.userId)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 24)
+            }
+
+            balanceLabel(net: net, counterparty: parties.first(where: { $0.userId == activeId }))
+
+            HStack(spacing: 8) {
+                Text("Amount")
+                    .font(DS.Typography.caption)
+                    .foregroundStyle(DS.Colors.subtext)
+                TextField(DS.Format.money(defaultAmount), text: $amountText)
+                    .keyboardType(.decimalPad)
+                    .textFieldStyle(.roundedBorder)
+            }
+            .padding(.horizontal, 24)
+
+            TextField("Note (optional)", text: $note)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal, 24)
+
+            if net != 0, effectiveAmount > 0 {
+                Button {
+                    if net > 0 {
+                        manager.settleUp(
+                            fromUser: currentUserId,
+                            toUser: activeId,
+                            amount: effectiveAmount,
+                            note: note
+                        )
+                    } else {
+                        manager.settleUp(
+                            fromUser: activeId,
+                            toUser: currentUserId,
+                            amount: effectiveAmount,
+                            note: note
+                        )
+                    }
+                    Haptics.success()
+                    dismiss()
+                } label: {
+                    Text(effectiveAmount < defaultAmount ? "Record Partial Payment" : "Mark as Settled")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(DS.PrimaryButton())
+                .padding(.horizontal, 24)
+            }
+
+            Spacer()
+        }
+        .navigationTitle("Settle Up")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Close") { dismiss() }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func balanceLabel(net: Int, counterparty: HouseholdMember?) -> some View {
+        let name = counterparty?.displayName ?? "them"
+        if net > 0 {
+            Text("You owe \(name)")
+                .font(DS.Typography.body)
+                .foregroundStyle(DS.Colors.subtext)
+            Text(DS.Format.money(net))
+                .font(.system(size: 36, weight: .bold, design: .rounded))
+                .foregroundStyle(DS.Colors.danger)
+        } else if net < 0 {
+            Text("\(name) owes you")
+                .font(DS.Typography.body)
+                .foregroundStyle(DS.Colors.subtext)
+            Text(DS.Format.money(abs(net)))
+                .font(.system(size: 36, weight: .bold, design: .rounded))
+                .foregroundStyle(DS.Colors.positive)
+        } else {
+            Text("All settled with \(name)")
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundStyle(DS.Colors.positive)
+        }
+    }
+}
+
+// ============================================================
+// MARK: - Nudge Share Sheet (UIActivityViewController wrapper)
+// ============================================================
+
+struct HouseholdNudgeShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+    func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
+}
+
+// ============================================================
+// MARK: - Household Group Sheet
+// ============================================================
+
+struct HouseholdGroupSheet: View {
+    @StateObject private var manager = HouseholdManager.shared
+    @Environment(\.dismiss) private var dismiss
+
+    let editingGroup: HouseholdGroup?
+
+    @State private var name: String = ""
+    @State private var selectedColor: String = "3DB9FC"
+    @State private var selectedMemberIds: Set<UUID> = []
+
+    /// Curated swatches ported from macOS group color palette.
+    private let palette: [String] = [
+        "3DB9FC", "7C5CFF", "FF7AB6", "FF8A00",
+        "28C76F", "FFB020", "EA5455", "8B5CF6"
+    ]
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Name") {
+                    TextField("Parents, Kids, Roommates…", text: $name)
+                        .autocorrectionDisabled()
+                }
+                Section("Color") {
+                    HStack(spacing: 10) {
+                        ForEach(palette, id: \.self) { hex in
+                            let color = Color(hexValue: UInt32(hex, radix: 16) ?? 0x3DB9FC)
+                            Button {
+                                selectedColor = hex
+                                Haptics.light()
+                            } label: {
+                                Circle()
+                                    .fill(color)
+                                    .frame(width: 28, height: 28)
+                                    .overlay(
+                                        Circle()
+                                            .stroke(selectedColor == hex ? Color.white : Color.clear,
+                                                    lineWidth: 2)
+                                    )
+                                    .overlay(
+                                        Circle()
+                                            .stroke(selectedColor == hex ? color : Color.clear,
+                                                    lineWidth: 4)
+                                            .scaleEffect(1.25)
+                                            .opacity(0.35)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Color \(hex)")
+                        }
+                    }
+                }
+                Section("Members") {
+                    ForEach(manager.household?.members ?? []) { m in
+                        Button {
+                            if selectedMemberIds.contains(m.id) {
+                                selectedMemberIds.remove(m.id)
+                            } else {
+                                selectedMemberIds.insert(m.id)
+                            }
+                        } label: {
+                            HStack {
+                                Text(m.displayName)
+                                    .foregroundStyle(DS.Colors.text)
+                                Spacer()
+                                if selectedMemberIds.contains(m.id) {
+                                    Image(systemName: "checkmark")
+                                        .foregroundStyle(DS.Colors.accent)
+                                }
+                            }
+                        }
+                    }
+                }
+                if editingGroup != nil {
+                    Section {
+                        Button("Delete Group", role: .destructive) {
+                            if let g = editingGroup {
+                                manager.removeGroup(id: g.id)
+                            }
+                            dismiss()
+                        }
+                    }
                 }
             }
-            .navigationTitle("Settle Up")
+            .navigationTitle(editingGroup == nil ? "New Group" : "Edit Group")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        let trimmed = name.trimmingCharacters(in: .whitespaces)
+                        guard !trimmed.isEmpty else { return }
+                        let ids = Array(selectedMemberIds)
+                        if let g = editingGroup {
+                            manager.updateGroup(
+                                id: g.id,
+                                name: trimmed,
+                                colorHex: selectedColor,
+                                memberIds: ids
+                            )
+                        } else {
+                            manager.addGroup(
+                                name: trimmed,
+                                colorHex: selectedColor,
+                                memberIds: ids
+                            )
+                        }
+                        Haptics.success()
+                        dismiss()
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .onAppear {
+                if let g = editingGroup {
+                    name = g.name
+                    selectedColor = g.colorHex
+                    selectedMemberIds = Set(g.memberIds)
                 }
             }
         }

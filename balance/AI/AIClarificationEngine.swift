@@ -32,6 +32,9 @@ enum AIFailure {
         case .lowConfidence:
             return "I'm not sure I understood that correctly. Could you rephrase?"
         case .missingData(let fields):
+            if fields == ["category"] {
+                return "What category is this? (Groceries, Dining, Shopping, Transport, Rent, Bills, Health, Education, Other)"
+            }
             return "I need a bit more info: \(fields.joined(separator: ", "))."
         case .conflictingData(let desc):
             return "That seems contradictory — \(desc). Could you clarify?"
@@ -208,6 +211,9 @@ enum AIClarificationEngine {
                 if p.amount == nil || p.amount == 0 {
                     return .missingData(fields: ["amount"])
                 }
+                if p.category == nil || (p.category?.isEmpty ?? true) {
+                    return .missingData(fields: ["category"])
+                }
             case .setBudget, .adjustBudget:
                 if p.budgetAmount == nil || p.budgetAmount == 0 {
                     return .missingData(fields: ["budget amount"])
@@ -229,6 +235,10 @@ enum AIClarificationEngine {
             case .addSubscription:
                 if p.subscriptionName == nil { return .missingData(fields: ["subscription name"]) }
                 if p.subscriptionAmount == nil { return .missingData(fields: ["subscription amount"]) }
+            case .addRecurring, .editRecurring, .cancelRecurring:
+                return .unsupportedAction(
+                    description: "Recurring transactions are auto-detected from your transaction history — no manual setup needed."
+                )
             default:
                 break
             }
@@ -378,6 +388,15 @@ enum AIClarificationEngine {
     }
 
     private static func checkDeleteData(input: String) -> ClarificationResult? {
+        // Subscription cancellation — don't treat as transaction deletion
+        let isSubscription = input.contains("subscription") || input.contains("اشتراک")
+            || input.contains("cancel") || input.contains("لغو") || input.contains("کنسل")
+        if isSubscription {
+            // Let the LLM handle it — it has the subscription list in context
+            // and will ask which subscription if needed
+            return nil
+        }
+
         let hasSpecifier = input.contains("last") || input.contains("آخری")
             || input.contains("today") || input.contains("امروز")
             || input.count > 30

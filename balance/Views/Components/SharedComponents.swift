@@ -173,7 +173,7 @@ struct TransactionRow: View {
                         )
                 } else {
                     Circle()
-                        .fill(t.category.tint.opacity(0.18))
+                        .fill(CategoryRegistry.shared.tint(for: t.category).opacity(0.18))
                         .frame(width: 36, height: 36)
                         .overlay(
                             categoryIcon
@@ -266,8 +266,8 @@ struct TransactionRow: View {
     }
 
     private var categoryIcon: some View {
-        Image(systemName: t.category.icon)
-            .foregroundStyle(t.category.tint)
+        Image(systemName: CategoryRegistry.shared.icon(for: t.category))
+            .foregroundStyle(CategoryRegistry.shared.tint(for: t.category))
             .font(.system(size: 14, weight: .semibold))
     }
 }

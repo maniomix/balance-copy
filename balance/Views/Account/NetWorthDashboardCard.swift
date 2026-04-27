@@ -3,13 +3,14 @@ import SwiftUI
 // MARK: - Net Worth Dashboard Card
 
 struct NetWorthDashboardCard: View {
-    
+
+    @Binding var store: Store
     @StateObject private var accountManager = AccountManager.shared
     @StateObject private var netWorthManager = NetWorthManager.shared
-    
+
     var body: some View {
         if !accountManager.accounts.isEmpty || netWorthManager.isLoading {
-            NavigationLink(destination: AccountsListView()) {
+            NavigationLink(destination: AccountsListView(store: $store)) {
                 DS.Card {
                     VStack(spacing: 12) {
                         HStack {

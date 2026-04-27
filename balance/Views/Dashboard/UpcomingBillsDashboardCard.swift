@@ -43,11 +43,11 @@ struct UpcomingBillsDashboardCard: View {
                             HStack(spacing: 10) {
                                 // Category icon
                                 Circle()
-                                    .fill(bill.category.tint.opacity(0.15))
+                                    .fill(CategoryRegistry.shared.tint(for: bill.category).opacity(0.15))
                                     .frame(width: 30, height: 30)
                                     .overlay(
-                                        Image(systemName: bill.category.icon)
-                                            .foregroundStyle(bill.category.tint)
+                                        Image(systemName: CategoryRegistry.shared.icon(for: bill.category))
+                                            .foregroundStyle(CategoryRegistry.shared.tint(for: bill.category))
                                             .font(.system(size: 12, weight: .semibold))
                                     )
 

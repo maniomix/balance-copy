@@ -692,17 +692,22 @@ struct AIMemoryRetrieval {
     // ── Context Generation ──
 
     /// Generate a personalization context block for the AI system prompt.
+    /// Combines correction patterns, approval tendencies, few-shot examples,
+    /// and user preferences into a compact prompt block.
+    @MainActor
     static func contextSummary() -> String {
         var lines: [String] = []
         let store = AIMemoryStore.shared
 
-        // Correction patterns
+        // Correction patterns — what the user has manually fixed
         let corrections = store.correctionEntries()
         if !corrections.isEmpty {
-            lines.append("LEARNED CORRECTIONS:")
-            for c in corrections.prefix(8) {
+            lines.append("LEARNED CORRECTIONS (always respect these):")
+            for c in corrections.prefix(10) {
                 let catName = Category(storageKey: c.value)?.title ?? c.value
-                lines.append("  \(c.displayKey) → \(catName) (corrected \(c.strength)x)")
+                let from = c.metadata["fromCategory"] ?? "?"
+                let fromName = Category(storageKey: from)?.title ?? from
+                lines.append("  \(c.displayKey): \(fromName) → \(catName) (corrected \(c.strength)x)")
             }
         }
 
@@ -714,6 +719,18 @@ struct AIMemoryRetrieval {
                 lines.append("  \(t.displayKey) → #\(t.value)")
             }
         }
+
+        // Few-shot examples — real successful interactions
+        let fewShot = AIFewShotLearning.shared.contextExamples(limit: 8)
+        if !fewShot.isEmpty {
+            lines.append(fewShot)
+        }
+
+        // Category usage & amount patterns
+        let catPrefs = AIFewShotLearning.shared.categoryPreferences()
+        if !catPrefs.isEmpty { lines.append(catPrefs) }
+        let amtPatterns = AIFewShotLearning.shared.amountPatterns()
+        if !amtPatterns.isEmpty { lines.append(amtPatterns) }
 
         // Clarification preference
         let style = store.clarificationStyle
@@ -733,8 +750,8 @@ struct AIMemoryRetrieval {
             lines.append("AUTOMATION COMFORT: \(automation.displayName)")
         }
 
-        // Approval patterns
-        let tendencies = store.allApprovalTendencies().filter { $0.total >= 5 }
+        // Approval patterns — what the user usually approves/rejects
+        let tendencies = store.allApprovalTendencies().filter { $0.total >= 3 }
         if !tendencies.isEmpty {
             lines.append("APPROVAL PATTERNS:")
             for t in tendencies.prefix(5) {

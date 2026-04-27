@@ -205,7 +205,7 @@ struct AIReceiptScannerView: View {
                                 .font(DS.Typography.caption)
                                 .foregroundStyle(DS.Colors.subtext)
                             Picker("Category", selection: $editCategory) {
-                                ForEach(Category.allCases, id: \.self) { cat in
+                                ForEach(store.allCategories, id: \.self) { cat in
                                     Text(cat.title).tag(cat)
                                 }
                             }

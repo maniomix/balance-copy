@@ -339,7 +339,7 @@ struct ForecastDetailView: View {
 
                         ForEach(Array(f.upcomingBills.prefix(10))) { bill in
                             HStack(spacing: 10) {
-                                Image(systemName: bill.category.icon)
+                                Image(systemName: CategoryRegistry.shared.icon(for: bill.category))
                                     .font(.system(size: 12))
                                     .foregroundStyle(DS.Colors.accent)
                                     .frame(width: 28, height: 28)

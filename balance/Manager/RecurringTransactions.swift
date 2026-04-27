@@ -77,8 +77,8 @@ struct RecurringTransaction: Identifiable, Hashable, Codable {
 
 struct RecurringTransactionsView: View {
     @Binding var store: Store
-    @State private var showAddSheet = false
-    
+
+
     var activeRecurring: [RecurringTransaction] {
         store.recurringTransactions.filter { $0.isActive }
     }
@@ -111,21 +111,73 @@ struct RecurringTransactionsView: View {
             }
         }
         .navigationTitle("Recurring")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showAddSheet = true
-                    Haptics.medium()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 16, weight: .semibold))
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 6) {
+                    Text("Recurring")
+                        .font(.system(size: 16, weight: .bold))
                         .foregroundStyle(DS.Colors.text)
+                    DS.BetaBadge()
                 }
             }
         }
-        .sheet(isPresented: $showAddSheet) {
-            AddRecurringSheet(store: $store)
+        .onAppear { syncAutoDetected() }
+        // Recurring transactions are now auto-detected from your transaction
+        // history — there is no manual add/edit entry point.
+    }
+
+    /// Run the heuristic recurring detector over the user's transactions and
+    /// upsert any new matches into `store.recurringTransactions`.
+    /// De-duped by (name, amount, frequency) case-insensitively.
+    private func syncAutoDetected() {
+        let detected = AIRecurringDetector.shared.detect(
+            transactions: store.transactions,
+            existingRecurring: store.recurringTransactions
+        )
+        guard !detected.isEmpty else { return }
+
+        func mapFrequency(_ f: DetectedRecurring.EstimatedFrequency) -> RecurringFrequency {
+            switch f {
+            case .weekly:    return .weekly
+            case .biweekly:  return .weekly
+            case .monthly:   return .monthly
+            case .quarterly: return .monthly
+            case .yearly:    return .yearly
+            }
+        }
+
+        let dismissed = Self.dismissedKeys
+        for d in detected where d.confidence >= 0.6 {
+            let freq = mapFrequency(d.frequency)
+            let key = Self.dismissKey(name: d.merchantName, frequency: freq)
+            if dismissed.contains(key) { continue }
+            let exists = store.recurringTransactions.contains { existing in
+                existing.name.lowercased() == d.merchantName.lowercased()
+                    && existing.frequency == freq
+            }
+            if exists { continue }
+
+            let category: Category = {
+                for c in Category.allCases where c.storageKey == d.suggestedCategory {
+                    return c
+                }
+                return .other
+            }()
+            let startDate = d.matchingTransactions.map(\.date).min() ?? Date()
+            let last = d.matchingTransactions.map(\.date).max()
+
+            let rec = RecurringTransaction(
+                name: d.merchantName,
+                amount: d.amount,
+                category: category,
+                frequency: freq,
+                startDate: startDate,
+                isActive: true,
+                lastProcessedDate: last,
+                note: "Auto-detected"
+            )
+            store.recurringTransactions.append(rec)
         }
     }
     
@@ -193,21 +245,11 @@ struct RecurringTransactionsView: View {
                 .font(DS.Typography.title)
                 .foregroundStyle(DS.Colors.text)
             
-            Text("Automate your regular expenses")
+            Text("We'll detect your recurring expenses automatically as you add transactions.")
                 .font(DS.Typography.body)
                 .foregroundStyle(DS.Colors.subtext)
-            
-            Button {
-                showAddSheet = true
-                Haptics.medium()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus")
-                    Text("Add Recurring")
-                }
-            }
-            .buttonStyle(DS.PrimaryButton())
-            .padding(.horizontal, 40)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
         }
         .padding(.vertical, 40)
     }
@@ -227,7 +269,24 @@ struct RecurringTransactionsView: View {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
             store.recurringTransactions.removeAll { $0.id == recurring.id }
         }
+        // Remember the dismissal so the auto-detector doesn't re-add it.
+        Self.dismissedKeys.insert(Self.dismissKey(name: recurring.name, frequency: recurring.frequency))
         Haptics.success()
+    }
+
+    /// Dismissed detections — `"<lower name>|<freq>"`, persisted across launches.
+    private static var dismissedKeys: Set<String> {
+        get {
+            let arr = UserDefaults.standard.stringArray(forKey: "recurring.dismissedKeys") ?? []
+            return Set(arr)
+        }
+        set {
+            UserDefaults.standard.set(Array(newValue), forKey: "recurring.dismissedKeys")
+        }
+    }
+
+    fileprivate static func dismissKey(name: String, frequency: RecurringFrequency) -> String {
+        "\(name.lowercased())|\(frequency.rawValue)"
     }
 }
 
@@ -246,12 +305,12 @@ struct RecurringRow: View {
                 // Category icon
                 ZStack {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(recurring.category.tint.opacity(0.12))
+                        .fill(CategoryRegistry.shared.tint(for: recurring.category).opacity(0.12))
                         .frame(width: 42, height: 42)
                     
-                    Image(systemName: recurring.category.icon)
+                    Image(systemName: CategoryRegistry.shared.icon(for: recurring.category))
                         .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(recurring.category.tint)
+                        .foregroundStyle(CategoryRegistry.shared.tint(for: recurring.category))
                 }
                 
                 // Info

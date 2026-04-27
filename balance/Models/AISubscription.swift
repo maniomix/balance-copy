@@ -9,16 +9,32 @@ import Foundation
 // iOS uses Codable structs stored on `Store`, with UUID refs.
 // Amounts are Int cents (iOS convention), not Decimal.
 //
-// MIGRATION TARGET (Subscription Rebuild — Phase 1, 2026-04-27):
-// `DetectedSubscription` is the canonical subscription model going
-// forward. It has been extended with `source`, `merchantKey`, trial
-// fields, and the missing billing-cycle cases so it covers everything
-// `AISubscription` does. The services and AI engines that still consume
-// `AISubscription` (CashflowForecastEngine, SubscriptionDetector,
-// SubscriptionForecast, SubscriptionReconciliationService,
-// SubscriptionNotificationScheduler, AISubscriptionOptimizer,
-// AIPredictionEngine, ReviewQueueService, etc.) will be migrated in
-// later phases. Until then this file stays. Do NOT add new call sites.
+// MIGRATION TARGET (Subscription Rebuild — Phase 1+9, 2026-04-27):
+// `DetectedSubscription` is the canonical subscription model. The
+// Subscription Rebuild went 1–9 covering the model, persistence,
+// detection quality, full UI, notifications, dashboard card, AI
+// integration, and cleanup. This file and the AISubscription-typed
+// services below remain only because they're called by AI/forecast
+// code that has unrelated heavy uncommitted work. They will be
+// deleted in a follow-up commit once those callers redirect at the
+// canonical model.
+//
+// REPLACEMENT POINTERS — when you migrate a caller:
+//   • AISubscription                     → DetectedSubscription
+//   • AISubscriptionCharge               → DetectedSubscription.chargeHistory[].ChargeRecord
+//   • AISubscriptionPriceChange          → DetectedSubscription.priceChangePercent /
+//                                          .priceChangeAmount (derived; ≥3 charges)
+//   • Store.aiSubscriptions              → SubscriptionEngine.shared.subscriptions
+//   • Store.aiSubscriptionCharges        → record.chargeHistory
+//   • Store.aiSubscriptionPriceChanges   → derived per record (no separate array)
+//   • SubscriptionForecast               → (use SubscriptionEngine.upcomingRenewals
+//                                          and the snapshot's billingCycle math
+//                                          via DetectedSubscription.effectiveCadenceDays)
+//   • SubscriptionNotificationScheduler  → SubscriptionAlertScheduler (Phase 6a)
+//   • AISubscription.merchantKey(for:)   → DetectedSubscription.merchantKey(for:)
+//                                          (same canonicalization, kept identical)
+//
+// Do NOT add new call sites against AISubscription.
 //
 // ============================================================
 

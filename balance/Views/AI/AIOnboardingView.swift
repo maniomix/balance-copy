@@ -1,4 +1,5 @@
 import SwiftUI
+import Flow
 
 // ============================================================
 // MARK: - AI Onboarding View (Phase 10)
@@ -360,7 +361,7 @@ struct AIOnboardingView: View {
                 .foregroundStyle(DS.Colors.subtext)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            FlowLayout(spacing: 8) {
+            HFlow(spacing: 8) {
                 ForEach(commonBills, id: \.self) { name in
                     quickAddChip(name: name, category: name == "Rent" ? "rent" : "bills", isRecurring: true)
                 }
@@ -371,7 +372,7 @@ struct AIOnboardingView: View {
                 .foregroundStyle(DS.Colors.subtext)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            FlowLayout(spacing: 8) {
+            HFlow(spacing: 8) {
                 ForEach(commonSubs, id: \.self) { name in
                     quickAddChip(name: name, category: "bills", isRecurring: false)
                 }
@@ -1026,7 +1027,7 @@ struct AIOnboardingView: View {
     }
 }
 
-// FlowLayout is defined in AISuggestedPrompts.swift — reused here.
+// Uses HFlow from SwiftUI-Flow package for wrapping layouts.
 
 // ══════════════════════════════════════════════════════════════
 // MARK: - Binding Helpers

@@ -151,12 +151,12 @@ struct ReviewActionSheet: View {
                         HStack(spacing: 10) {
                             ZStack {
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(tx.category.tint.opacity(0.12))
+                                    .fill(CategoryRegistry.shared.tint(for: tx.category).opacity(0.12))
                                     .frame(width: 32, height: 32)
 
-                                Image(systemName: tx.category.icon)
+                                Image(systemName: CategoryRegistry.shared.icon(for: tx.category))
                                     .font(.system(size: 14, weight: .medium))
-                                    .foregroundStyle(tx.category.tint)
+                                    .foregroundStyle(CategoryRegistry.shared.tint(for: tx.category))
                             }
 
                             VStack(alignment: .leading, spacing: 2) {
@@ -235,15 +235,15 @@ struct ReviewActionSheet: View {
                     GridItem(.flexible()), GridItem(.flexible()),
                     GridItem(.flexible()), GridItem(.flexible())
                 ], spacing: 8) {
-                    ForEach(Category.allCases, id: \.self) { cat in
+                    ForEach(store.allCategories, id: \.self) { cat in
                         Button {
                             selectedCategory = cat
                             Haptics.light()
                         } label: {
                             VStack(spacing: 4) {
-                                Image(systemName: cat.icon)
+                                Image(systemName: cat.icon(in: store))
                                     .font(.system(size: 16, weight: .medium))
-                                    .foregroundStyle(selectedCategory == cat ? .white : cat.tint)
+                                    .foregroundStyle(selectedCategory == cat ? .white : cat.tint(in: store))
 
                                 Text(cat.title)
                                     .font(.system(size: 10, weight: .semibold))

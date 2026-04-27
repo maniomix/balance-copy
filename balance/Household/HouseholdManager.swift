@@ -158,6 +158,52 @@ class HouseholdManager: ObservableObject {
         save()
     }
 
+    /// Mark a member as archived (hidden from pickers) while keeping their
+    /// ledger history. Use this instead of `removeMember` whenever the member
+    /// has splits or settlements attached — `hasLedgerHistory(for:)` returns
+    /// true in that case.
+    func archiveMember(userId targetId: String) {
+        guard var h = household, h.canEdit(userId: userId) else { return }
+        guard let idx = h.members.firstIndex(where: { $0.userId == targetId }) else { return }
+        guard h.members[idx].role != .owner else { return }
+        h.members[idx].isActive = false
+        h.members[idx].archivedAt = Date()
+        h.updatedAt = Date()
+        household = h
+        save()
+    }
+
+    /// Re-activate a previously archived member.
+    func restoreMember(userId targetId: String) {
+        guard var h = household, h.canEdit(userId: userId) else { return }
+        guard let idx = h.members.firstIndex(where: { $0.userId == targetId }) else { return }
+        h.members[idx].isActive = true
+        h.members[idx].archivedAt = nil
+        h.updatedAt = Date()
+        household = h
+        save()
+    }
+
+    /// Whether a member has any splits or settlements attached.
+    /// Callers should archive (not delete) members with history.
+    func hasLedgerHistory(for targetUserId: String) -> Bool {
+        guard let h = household else { return false }
+        if splitExpenses.contains(where: {
+            $0.householdId == h.id
+                && ($0.paidBy == targetUserId
+                    || $0.customSplits.contains(where: { $0.userId == targetUserId }))
+        }) {
+            return true
+        }
+        if settlements.contains(where: {
+            $0.householdId == h.id
+                && ($0.fromUserId == targetUserId || $0.toUserId == targetUserId)
+        }) {
+            return true
+        }
+        return false
+    }
+
     func updateMemberRole(userId targetId: String, role: HouseholdRole) {
         guard var h = household, h.canEdit(userId: userId) else { return }
         if let idx = h.members.firstIndex(where: { $0.userId == targetId }) {
@@ -166,6 +212,42 @@ class HouseholdManager: ObservableObject {
             household = h
             save()
         }
+    }
+
+    // ============================================================
+    // MARK: - Groups (sub-groups for future per-group budgets)
+    // ============================================================
+
+    func addGroup(name: String, colorHex: String = "3DB9FC", memberIds: [UUID] = []) {
+        guard var h = household, h.canEdit(userId: userId) else { return }
+        let group = HouseholdGroup(name: name, colorHex: colorHex, memberIds: memberIds)
+        h.groups.append(group)
+        h.updatedAt = Date()
+        household = h
+        save()
+    }
+
+    func updateGroup(id: UUID, name: String? = nil, colorHex: String? = nil, memberIds: [UUID]? = nil) {
+        guard var h = household, h.canEdit(userId: userId) else { return }
+        guard let idx = h.groups.firstIndex(where: { $0.id == id }) else { return }
+        if let name = name { h.groups[idx].name = name }
+        if let colorHex = colorHex { h.groups[idx].colorHex = colorHex }
+        if let memberIds = memberIds { h.groups[idx].memberIds = memberIds }
+        h.updatedAt = Date()
+        household = h
+        save()
+    }
+
+    func removeGroup(id: UUID) {
+        guard var h = household, h.canEdit(userId: userId) else { return }
+        h.groups.removeAll { $0.id == id }
+        // Clear group reference from any member who had it.
+        for i in h.members.indices {
+            h.members[i].groupIds.removeAll { $0 == id }
+        }
+        h.updatedAt = Date()
+        household = h
+        save()
     }
 
     // ============================================================
@@ -187,6 +269,50 @@ class HouseholdManager: ObservableObject {
 
     /// Current member record.
     var currentMember: HouseholdMember? { household?.member(for: userId) }
+
+    // ============================================================
+    // MARK: - Per-Account Sharing
+    // ============================================================
+    //
+    // The household member record stores `sharedAccountIds` with three states:
+    //   • nil   → share all (default when shareTransactions is on)
+    //   • []    → share none
+    //   • [ids] → share only the listed ids
+    // These helpers wrap the list-mutation semantics so the Accounts UI
+    // doesn't have to think about nil-vs-empty edge cases.
+
+    /// Whether a specific account is currently shared with the household.
+    /// Returns false when not in a household or `shareTransactions` is off.
+    func isAccountShared(_ accountId: UUID) -> Bool {
+        guard let m = currentMember, m.shareTransactions else { return false }
+        if let ids = m.sharedAccountIds {
+            return ids.contains(accountId.uuidString)
+        }
+        return true // nil means "share all"
+    }
+
+    /// Toggle whether `accountId` is shared with the household. No-op when
+    /// not in a household. Materialises the "share all" state into an
+    /// explicit list before excluding, so the user's other choices survive.
+    func setAccountShared(_ accountId: UUID, shared: Bool, allActiveIds: [UUID]) {
+        guard let m = currentMember, m.shareTransactions else { return }
+        let key = accountId.uuidString
+
+        var ids: [String]
+        if let existing = m.sharedAccountIds {
+            ids = existing
+        } else {
+            // Materialise "share all" into the explicit list so we can exclude one.
+            ids = allActiveIds.map(\.uuidString)
+        }
+
+        if shared {
+            if !ids.contains(key) { ids.append(key) }
+        } else {
+            ids.removeAll { $0 == key }
+        }
+        updatePrivacy(shareTransactions: true, sharedAccountIds: ids)
+    }
 
     // ============================================================
     // MARK: - Shared Budgets
@@ -280,6 +406,26 @@ class HouseholdManager: ObservableObject {
         }
     }
 
+    /// Drop settlements whose fromUser AND toUser are both absent from the
+    /// current household member list — they can only have been left behind by
+    /// hard-deleting both endpoints of a pair. Ported from macOS
+    /// `HouseholdService.repairOrphans`.
+    func sweepOrphanSettlements() {
+        guard let h = household else { return }
+        let validIds = Set(h.members.map { $0.userId })
+        let before = settlements.count
+        settlements.removeAll { s in
+            s.householdId == h.id
+                && !validIds.contains(s.fromUserId)
+                && !validIds.contains(s.toUserId)
+        }
+        let removed = before - settlements.count
+        if removed > 0 {
+            SecureLogger.info("Orphan settlement sweep removed \(removed) record(s)")
+            save()
+        }
+    }
+
     func markExpenseSettled(id: UUID) {
         if let idx = splitExpenses.firstIndex(where: { $0.id == id }) {
             splitExpenses[idx].isSettled = true
@@ -294,38 +440,113 @@ class HouseholdManager: ObservableObject {
         return splitExpenses.filter { $0.householdId == h.id && !$0.isSettled }
     }
 
-    /// Net balance between two members.
-    /// Positive = fromUser owes toUser.
-    func netBalance(fromUser: String, toUser: String) -> Int {
+    /// Open debt that `debtor` still owes to `creditor`, after applying
+    /// same-direction settlements. Clamp-safe: never goes below zero, so an
+    /// over-settlement can't flip a pair into a reverse debt.
+    ///
+    /// Ported from macOS HouseholdService.openPairBalances clamp rule.
+    func openDebt(debtor: String, creditor: String) -> Int {
         guard let h = household else { return 0 }
         let members = h.members
-        var balance: Int = 0
-
-        for expense in unsettledExpenses {
+        var owed = 0
+        for expense in splitExpenses
+            where expense.householdId == h.id
+                && !expense.isSettled
+                && expense.paidBy == creditor {
             let splits = expense.splits(members: members)
-            if expense.paidBy == toUser {
-                // toUser paid → fromUser owes their share
-                let fromShare = splits.first(where: { $0.userId == fromUser })?.amount ?? 0
-                balance += fromShare
-            } else if expense.paidBy == fromUser {
-                // fromUser paid → toUser owes their share
-                let toShare = splits.first(where: { $0.userId == toUser })?.amount ?? 0
-                balance -= toShare
+            owed += splits.first(where: { $0.userId == debtor })?.amount ?? 0
+        }
+        let paid = settlements
+            .filter {
+                $0.householdId == h.id
+                    && $0.fromUserId == debtor
+                    && $0.toUserId == creditor
+            }
+            .reduce(0) { $0 + $1.amount }
+        return max(0, owed - paid)
+    }
+
+    /// Signed net balance between two members. Positive = `fromUser` owes
+    /// `toUser`. Each direction is clamped via `openDebt`, so the sign only
+    /// flips when the underlying unsettled ledger supports it.
+    func netBalance(fromUser: String, toUser: String) -> Int {
+        openDebt(debtor: fromUser, creditor: toUser)
+            - openDebt(debtor: toUser, creditor: fromUser)
+    }
+
+    /// Direction-safe pairwise balance for the "who owes who" panel.
+    struct PairBalance: Identifiable, Hashable {
+        let id: String
+        let debtor: HouseholdMember
+        let creditor: HouseholdMember
+        let amount: Int
+    }
+
+    /// All open debts across the household, one row per pair. Mirrors macOS
+    /// `HouseholdService.openPairBalances`. Already clamp-safe.
+    func openPairBalances() -> [PairBalance] {
+        guard let h = household else { return [] }
+        let members = h.activeMembers.isEmpty ? h.members : h.activeMembers
+        var result: [PairBalance] = []
+        for i in 0..<members.count {
+            for j in (i + 1)..<members.count {
+                let a = members[i]
+                let b = members[j]
+                let diff = netBalance(fromUser: a.userId, toUser: b.userId)
+                if diff > 0 {
+                    result.append(PairBalance(
+                        id: "\(a.userId)->\(b.userId)",
+                        debtor: a, creditor: b, amount: diff
+                    ))
+                } else if diff < 0 {
+                    result.append(PairBalance(
+                        id: "\(b.userId)->\(a.userId)",
+                        debtor: b, creditor: a, amount: -diff
+                    ))
+                }
             }
         }
-        return balance
+        return result.sorted { $0.amount > $1.amount }
     }
 
     // ============================================================
     // MARK: - Settlements
     // ============================================================
 
+    /// Record a payment from `fromUser` to `toUser`. Walks open shares in FIFO
+    /// order (earliest `createdAt` first) where `toUser` paid, flipping
+    /// expenses to settled only while the budget covers `fromUser`'s share.
+    /// Remaining budget stays recorded on the settlement row — `openDebt`
+    /// subtracts it from the live balance regardless of whether any expense
+    /// flipped to settled.
+    ///
+    /// Ported from macOS `HouseholdService.markSharesSettled`.
     func settleUp(fromUser: String, toUser: String, amount: Int, note: String = "") {
         guard let h = household else { return }
-        // Mark matching expenses as settled
-        let expenseIds = unsettledExpenses
-            .filter { $0.paidBy == toUser || $0.paidBy == fromUser }
-            .map { $0.id }
+
+        let openForward = splitExpenses
+            .filter {
+                $0.householdId == h.id
+                    && !$0.isSettled
+                    && $0.paidBy == toUser
+            }
+            .sorted { $0.createdAt < $1.createdAt }
+
+        var remaining = amount
+        var settledIds: [UUID] = []
+
+        for exp in openForward {
+            let splits = exp.splits(members: h.members)
+            let share = splits.first(where: { $0.userId == fromUser })?.amount ?? 0
+            guard share > 0, share <= remaining else { continue }
+            if let idx = splitExpenses.firstIndex(where: { $0.id == exp.id }) {
+                splitExpenses[idx].isSettled = true
+                splitExpenses[idx].settledAt = Date()
+                settledIds.append(exp.id)
+                remaining -= share
+            }
+            if remaining <= 0 { break }
+        }
 
         let settlement = Settlement(
             householdId: h.id,
@@ -333,14 +554,9 @@ class HouseholdManager: ObservableObject {
             toUserId: toUser,
             amount: amount,
             note: note.isEmpty ? "Settlement" : note,
-            relatedExpenseIds: expenseIds
+            relatedExpenseIds: settledIds
         )
         settlements.append(settlement)
-
-        // Mark related expenses as settled
-        for eid in expenseIds {
-            markExpenseSettled(id: eid)
-        }
         save()
     }
 

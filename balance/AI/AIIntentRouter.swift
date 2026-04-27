@@ -24,6 +24,25 @@ enum AIIntentRouter {
     static func classify(_ text: String) -> IntentClassification {
         let lower = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = normalizePersianDigits(lower)
+
+        // Detect follow-up / confirmation messages that rely on conversation context.
+        // These should bypass intent classification and go straight to the LLM.
+        if isFollowUp(normalized) {
+            return IntentClassification(
+                primary: Interpretation(
+                    intentType: .askQuestion, domain: .general,
+                    confidence: 0.75, reason: "Follow-up / confirmation"
+                ),
+                secondary: nil,
+                allInterpretations: [],
+                clarificationNeeded: false,
+                clarification: nil,
+                extractedEntities: [:],
+                isMultiIntent: false,
+                contextHint: .full
+            )
+        }
+
         let entities = extractEntities(normalized)
         let isMulti = detectMultiIntent(normalized)
 
@@ -732,6 +751,46 @@ enum AIIntentRouter {
     }
 
     /// Normalize Persian/Arabic digits to ASCII digits.
+    /// Detect short follow-up / confirmation messages that need conversation context.
+    /// These get high confidence so they bypass clarification and go to the LLM.
+    private static func isFollowUp(_ text: String) -> Bool {
+        let followUpPatterns: Set<String> = [
+            // English
+            "yes", "yeah", "yep", "yup", "sure", "ok", "okay",
+            "do it", "go ahead", "confirm", "confirmed",
+            "all of them", "all", "both", "neither", "none",
+            "the first one", "the second one", "the last one",
+            "that one", "this one",
+            "no", "nope", "never mind", "cancel",
+            // Farsi
+            "آره", "بله", "باشه", "اوکی", "بزن", "انجامش بده",
+            "همشون", "همه", "همه رو", "هردو", "هیچکدوم",
+            "اولی", "دومی", "آخری",
+            "نه", "بیخیال", "ولش کن",
+        ]
+        if followUpPatterns.contains(text) { return true }
+        // Very short messages (< 5 words) that start with common follow-up words
+        let words = text.split(separator: " ")
+        if words.count <= 4 {
+            let firstWord = String(words.first ?? "")
+            let shortFollowStarters: Set<String> = [
+                "yes", "no", "all", "both", "that", "this", "the",
+                "آره", "نه", "همه", "اون", "این",
+            ]
+            if shortFollowStarters.contains(firstWord) { return true }
+
+            // Short preposition-led phrases are almost always follow-ups
+            // referring to a prior turn: "on travel", "about dining",
+            // "for groceries?", "in rent last month".
+            let prepositionStarters: Set<String> = [
+                "on", "about", "for", "in", "of", "with", "to",
+                "روی", "درباره", "برای", "در",
+            ]
+            if prepositionStarters.contains(firstWord) { return true }
+        }
+        return false
+    }
+
     private static func normalizePersianDigits(_ text: String) -> String {
         var result = text
         let persianDigits: [(Character, Character)] = [

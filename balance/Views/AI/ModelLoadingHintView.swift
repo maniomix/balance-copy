@@ -1,0 +1,65 @@
+import SwiftUI
+
+// ============================================================
+// MARK: - Model Loading Hint View (Phase 5a — iOS port)
+// ============================================================
+//
+// Rotating hint messages shown during AI model loading. Appears
+// after a short delay, then cycles through tips with a smooth
+// transition to keep the user engaged while the Gemma 4 weights
+// spin up.
+//
+// Ported from macOS Centmond. Copy adjusted for iOS context
+// (e.g. "your Mac" → "your device").
+// ============================================================
+
+struct ModelLoadingHintView: View {
+    @State private var visible = false
+    @State private var hintIndex = 0
+
+    private let initialDelay: TimeInterval = 3.0
+    private let rotationInterval: TimeInterval = 4.5
+
+    private static let hints: [String] = [
+        "This might take a moment…",
+        "First load takes longer — next time will be faster",
+        "The AI runs entirely on your device",
+        "No data leaves your phone",
+        "Optimized for Apple Silicon",
+        "Preparing neural networks…",
+        "Almost ready…",
+    ]
+
+    var body: some View {
+        Group {
+            if visible {
+                Text(Self.hints[hintIndex])
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DS.Colors.subtext)
+                    .multilineTextAlignment(.center)
+                    .contentTransition(.numericText())
+                    .animation(.easeInOut(duration: 0.4), value: hintIndex)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+        .frame(height: 18)
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + initialDelay) {
+                withAnimation(.easeIn(duration: 0.3)) {
+                    visible = true
+                }
+                startRotation()
+            }
+        }
+    }
+
+    private func startRotation() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + rotationInterval) {
+            guard visible else { return }
+            withAnimation(.easeInOut(duration: 0.4)) {
+                hintIndex = (hintIndex + 1) % Self.hints.count
+            }
+            startRotation()
+        }
+    }
+}

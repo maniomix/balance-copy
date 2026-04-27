@@ -3,51 +3,33 @@ import SwiftUI
 // ============================================================
 // MARK: - Monthly Briefing View
 // ============================================================
-// Scrollable presentation of the MonthlyBriefing model.
-// Each section rendered as a DS.Card with contextual styling.
+// Iterates briefing.sections and renders each via the matching
+// section card. Adding a new section kind = add a switch arm.
+//
+// Design rules:
+//   • One accent (DS.Colors.accent) per card; identity carried
+//     by SF Symbol + neutral text — no hex colors.
+//   • No inline action pills; whole-card tap opens chat seeded
+//     with that section's context (handled by parent).
+//   • Synthesis text first; only briefing-unique numbers shown,
+//     not redashed dashboard KPIs.
+//   • .low confidence shows a subtle "Limited data" pill.
 // ============================================================
 
 struct BriefingView: View {
     let briefing: MonthlyBriefing
+    var onSectionTap: ((BriefingSection) -> Void)? = nil
 
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
-                // Header
                 headerCard
 
-                // Overview
-                overviewCard
-
-                // Spending breakdown
-                if let spending = briefing.spending {
-                    spendingCard(spending)
+                ForEach(briefing.sections) { section in
+                    sectionCard(section)
                 }
 
-                // Forecast
-                if let forecast = briefing.forecast {
-                    forecastCard(forecast)
-                }
-
-                // Subscriptions
-                if let subs = briefing.subscriptions {
-                    subscriptionCard(subs)
-                }
-
-                // Review queue
-                if let review = briefing.review {
-                    reviewCard(review)
-                }
-
-                // Goals
-                if let goals = briefing.goals {
-                    goalCard(goals)
-                }
-
-                // Household
-                if let household = briefing.household {
-                    householdCard(household)
-                }
+                generatedFooter
 
                 Spacer(minLength: 24)
             }
@@ -61,47 +43,83 @@ struct BriefingView: View {
 
     private var headerCard: some View {
         DS.Card {
-            VStack(spacing: 8) {
-                HStack {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
                     Image(systemName: "doc.text.magnifyingglass")
-                        .font(.system(size: 24))
+                        .font(.system(size: 22))
                         .foregroundStyle(DS.Colors.accent)
-
                     Text(briefing.monthDisplayName)
                         .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(DS.Colors.text)
-
                     Spacer()
                 }
-
                 Text("Your personalized financial summary")
                     .font(DS.Typography.caption)
                     .foregroundStyle(DS.Colors.subtext)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+    }
+
+    // MARK: - Section dispatch
+
+    @ViewBuilder
+    private func sectionCard(_ section: BriefingSection) -> some View {
+        let card: AnyView = {
+            switch section.kind {
+            case .overview(let p):      return AnyView(overviewCard(p, confidence: section.confidence))
+            case .spending(let p):      return AnyView(spendingCard(p))
+            case .forecast(let p):      return AnyView(forecastCard(p))
+            case .subscriptions(let p): return AnyView(subscriptionsCard(p))
+            case .review(let p):        return AnyView(reviewCard(p))
+            case .goals(let p):         return AnyView(goalsCard(p))
+            case .household(let p):     return AnyView(householdCard(p))
+            }
+        }()
+
+        Button { onSectionTap?(section) } label: { card }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(accessibilityLabel(for: section))
+            .accessibilityHint("Double tap to ask Centmond AI about this.")
+    }
+
+    private func accessibilityLabel(for section: BriefingSection) -> String {
+        let prefix: String
+        switch section.kind {
+        case .overview(let p):      prefix = "Overview. \(p.headline). \(p.subheadline)"
+        case .spending(let p):      prefix = "Spending. \(p.concentrationWarning ?? "Top categories shown.")"
+        case .forecast(let p):      prefix = "Forecast. \(p.riskSummary ?? "Risk \(riskWord(p.riskLevel)).")"
+        case .subscriptions(let p): prefix = "Subscriptions. \(p.headline)"
+        case .review(let p):        prefix = "Review queue. \(p.headline)"
+        case .goals(let p):         prefix = "Goals. \(p.headline)"
+        case .household(let p):     prefix = "Household. \(p.headline)"
+        }
+        return section.confidence == .low ? "\(prefix). Limited data." : prefix
+    }
+
+    private func riskWord(_ level: ForecastPayload.RiskLevel) -> String {
+        switch level {
+        case .safe:     return "safe"
+        case .caution:  return "caution"
+        case .highRisk: return "high"
         }
     }
 
     // MARK: - Overview
 
-    private var overviewCard: some View {
+    private func overviewCard(_ p: OverviewPayload, confidence: BriefingSection.Confidence) -> some View {
         DS.Card {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(briefing.overview.headline)
+            VStack(alignment: .leading, spacing: 10) {
+                Text(p.headline)
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(DS.Colors.text)
 
-                Text(briefing.overview.subheadline)
+                Text(p.subheadline)
                     .font(DS.Typography.body)
                     .foregroundStyle(DS.Colors.subtext)
 
-                Divider().foregroundStyle(DS.Colors.grid)
-
-                HStack(spacing: 0) {
-                    kpiItem(label: "Budget", value: DS.Format.money(briefing.overview.budgetTotal))
-                    kpiItem(label: "Spent", value: DS.Format.money(briefing.overview.totalSpent))
-                    kpiItem(label: "Income", value: DS.Format.money(briefing.overview.totalIncome))
-                    kpiItem(label: "Remaining", value: DS.Format.money(briefing.overview.remaining))
+                if confidence == .low {
+                    confidencePill
                 }
             }
         }
@@ -109,35 +127,32 @@ struct BriefingView: View {
 
     // MARK: - Spending
 
-    private func spendingCard(_ spending: SpendingSection) -> some View {
+    private func spendingCard(_ p: SpendingPayload) -> some View {
         DS.Card {
             VStack(alignment: .leading, spacing: 10) {
-                sectionHeader(icon: "chart.pie.fill", title: "Spending", color: 0x4559F5)
+                sectionHeader(icon: "chart.pie.fill", title: "Spending")
 
-                ForEach(Array(spending.topCategories.enumerated()), id: \.offset) { _, cat in
+                ForEach(Array(p.topCategories.enumerated()), id: \.offset) { _, row in
                     HStack {
-                        Text(cat.category)
+                        Text(row.category)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(DS.Colors.text)
-
                         Spacer()
-
-                        Text(DS.Format.money(cat.amount))
+                        Text(DS.Format.money(row.amount))
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(DS.Colors.text)
-
-                        Text(DS.Format.percent(cat.percent))
+                        Text(DS.Format.percent(row.percent))
                             .font(.system(size: 12))
                             .foregroundStyle(DS.Colors.subtext)
-                            .frame(width: 40, alignment: .trailing)
+                            .frame(width: 44, alignment: .trailing)
                     }
                 }
 
-                if let warning = spending.concentrationWarning {
-                    alertPill(text: warning, color: .orange)
+                if let warning = p.concentrationWarning {
+                    alertPill(text: warning)
                 }
-                if let alert = spending.smallExpenseAlert {
-                    alertPill(text: alert, color: DS.Colors.subtext)
+                if let alert = p.smallExpenseAlert {
+                    alertPill(text: alert)
                 }
             }
         }
@@ -145,35 +160,31 @@ struct BriefingView: View {
 
     // MARK: - Forecast
 
-    private func forecastCard(_ forecast: ForecastSection) -> some View {
+    private func forecastCard(_ p: ForecastPayload) -> some View {
         DS.Card {
             VStack(alignment: .leading, spacing: 10) {
-                sectionHeader(icon: "chart.line.uptrend.xyaxis", title: "Forecast", color: 0x2ED573)
+                sectionHeader(icon: "chart.line.uptrend.xyaxis", title: "Forecast")
 
-                HStack(spacing: 0) {
-                    kpiItem(label: "Safe/Day", value: DS.Format.money(forecast.safeToSpendPerDay))
-                    kpiItem(label: "Safe Total", value: DS.Format.money(forecast.safeToSpendTotal))
-                    kpiItem(label: "EOM Budget", value: DS.Format.money(forecast.projectedMonthEnd))
-                }
+                Text("Safe to spend \(DS.Format.money(p.safeToSpendPerDay))/day · \(DS.Format.money(p.safeToSpendTotal)) total")
+                    .font(DS.Typography.body)
+                    .foregroundStyle(DS.Colors.text)
 
                 HStack(spacing: 8) {
-                    riskBadge(forecast.riskLevel)
-
-                    if forecast.upcomingBillCount > 0 {
-                        Text("\(forecast.upcomingBillCount) upcoming bill\(forecast.upcomingBillCount == 1 ? "" : "s")")
+                    riskBadge(p.riskLevel)
+                    if p.upcomingBillCount > 0 {
+                        Text("\(p.upcomingBillCount) upcoming bill\(p.upcomingBillCount == 1 ? "" : "s")")
                             .font(.system(size: 12))
                             .foregroundStyle(DS.Colors.subtext)
                     }
-
-                    if forecast.overdueBillCount > 0 {
-                        Text("\(forecast.overdueBillCount) overdue")
+                    if p.overdueBillCount > 0 {
+                        Text("\(p.overdueBillCount) overdue")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(DS.Colors.danger)
                     }
                 }
 
-                if let risk = forecast.riskSummary {
-                    alertPill(text: risk, color: .red)
+                if let risk = p.riskSummary {
+                    alertPill(text: risk, emphasized: true)
                 }
             }
         }
@@ -181,21 +192,19 @@ struct BriefingView: View {
 
     // MARK: - Subscriptions
 
-    private func subscriptionCard(_ subs: SubscriptionSection) -> some View {
+    private func subscriptionsCard(_ p: SubscriptionPayload) -> some View {
         DS.Card {
             VStack(alignment: .leading, spacing: 10) {
-                sectionHeader(icon: "repeat.circle.fill", title: "Subscriptions", color: 0xFF9F0A)
+                sectionHeader(icon: "repeat.circle.fill", title: "Subscriptions")
 
-                Text(subs.headline)
+                Text(p.headline)
                     .font(DS.Typography.body)
                     .foregroundStyle(DS.Colors.text)
 
-                HStack(spacing: 0) {
-                    kpiItem(label: "Active", value: "\(subs.activeCount)")
-                    kpiItem(label: "Monthly", value: DS.Format.money(subs.monthlyTotal))
-                    if subs.potentialSavings > 0 {
-                        kpiItem(label: "Savings", value: DS.Format.money(subs.potentialSavings))
-                    }
+                if p.unusedCount > 0 || p.priceIncreaseCount > 0 {
+                    Text("\(p.activeCount) active · \(DS.Format.money(p.monthlyTotal))/mo")
+                        .font(.system(size: 12))
+                        .foregroundStyle(DS.Colors.subtext)
                 }
             }
         }
@@ -203,49 +212,40 @@ struct BriefingView: View {
 
     // MARK: - Review
 
-    private func reviewCard(_ review: ReviewSection) -> some View {
+    private func reviewCard(_ p: ReviewPayload) -> some View {
         DS.Card {
             VStack(alignment: .leading, spacing: 10) {
-                sectionHeader(icon: "checkmark.circle.fill", title: "Review Queue", color: 0xFF3B30)
+                sectionHeader(icon: "checkmark.circle.fill", title: "Review Queue")
 
-                Text(review.headline)
+                Text(p.headline)
                     .font(DS.Typography.body)
                     .foregroundStyle(DS.Colors.text)
-
-                HStack(spacing: 0) {
-                    kpiItem(label: "Pending", value: "\(review.pendingCount)")
-                    kpiItem(label: "High Priority", value: "\(review.highPriorityCount)")
-                    kpiItem(label: "Duplicates", value: "\(review.duplicateCount)")
-                }
             }
         }
     }
 
     // MARK: - Goals
 
-    private func goalCard(_ goals: GoalSection) -> some View {
+    private func goalsCard(_ p: GoalPayload) -> some View {
         DS.Card {
             VStack(alignment: .leading, spacing: 10) {
-                sectionHeader(icon: "target", title: "Goals", color: 0x3498DB)
+                sectionHeader(icon: "target", title: "Goals")
 
-                Text(goals.headline)
+                Text(p.headline)
                     .font(DS.Typography.body)
                     .foregroundStyle(DS.Colors.text)
 
-                if let name = goals.topGoalName, let progress = goals.topGoalProgress {
+                if let name = p.topGoalName, let progress = p.topGoalProgress {
                     HStack {
                         Text(name)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(DS.Colors.text)
-
                         Spacer()
-
                         Text(DS.Format.percent(progress))
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(DS.Colors.accent)
                     }
-
-                    ProgressView(value: progress)
+                    ProgressView(value: min(max(progress, 0), 1))
                         .tint(DS.Colors.accent)
                 }
             }
@@ -254,70 +254,58 @@ struct BriefingView: View {
 
     // MARK: - Household
 
-    private func householdCard(_ household: HouseholdSection) -> some View {
+    private func householdCard(_ p: HouseholdPayload) -> some View {
         DS.Card {
             VStack(alignment: .leading, spacing: 10) {
-                sectionHeader(icon: "person.2.fill", title: "Household", color: 0xE91E63)
+                sectionHeader(icon: "person.2.fill", title: "Household")
 
-                Text(household.headline)
+                Text(p.headline)
                     .font(DS.Typography.body)
                     .foregroundStyle(DS.Colors.text)
 
-                HStack(spacing: 0) {
-                    kpiItem(label: "Shared", value: DS.Format.money(household.sharedSpending))
-                    if household.sharedBudget > 0 {
-                        kpiItem(label: "Budget", value: DS.Format.money(household.sharedBudget))
-                    }
-                    kpiItem(label: "Balance", value: DS.Format.money(abs(household.netBalance)))
-                }
-
-                if household.unsettledCount > 0 {
+                if p.unsettledCount > 0 {
                     alertPill(
-                        text: "\(household.unsettledCount) expense\(household.unsettledCount == 1 ? "" : "s") to settle with \(household.partnerName)",
-                        color: .orange
+                        text: "\(p.unsettledCount) expense\(p.unsettledCount == 1 ? "" : "s") to settle with \(p.partnerName)"
                     )
                 }
             }
         }
     }
 
-    // MARK: - Reusable Components
+    // MARK: - Footer
 
-    private func sectionHeader(icon: String, title: String, color: Int) -> some View {
+    private var generatedFooter: some View {
+        Text("Generated \(briefing.generatedAt.formatted(date: .abbreviated, time: .shortened))")
+            .font(.system(size: 11))
+            .foregroundStyle(DS.Colors.subtext)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.top, 4)
+    }
+
+    // MARK: - Reusable
+
+    private func sectionHeader(icon: String, title: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 16))
-                .foregroundStyle(Color(hexValue: UInt32(color)))
-
+                .foregroundStyle(DS.Colors.subtext)
             Text(title)
                 .font(DS.Typography.section)
                 .foregroundStyle(DS.Colors.text)
+            Spacer()
         }
     }
 
-    private func kpiItem(label: String, value: String) -> some View {
-        VStack(spacing: 4) {
-            Text(value)
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(DS.Colors.text)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+    private func riskBadge(_ level: ForecastPayload.RiskLevel) -> some View {
+        let (text, color): (String, Color) = {
+            switch level {
+            case .safe:     return ("Safe", DS.Colors.positive)
+            case .caution:  return ("Caution", DS.Colors.warning)
+            case .highRisk: return ("High Risk", DS.Colors.danger)
+            }
+        }()
 
-            Text(label)
-                .font(.system(size: 11))
-                .foregroundStyle(DS.Colors.subtext)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func riskBadge(_ level: String) -> some View {
-        let color: Color = switch level {
-        case "safe": .green
-        case "caution": .orange
-        default: .red
-        }
-
-        return Text(level.capitalized)
+        return Text(text)
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(color)
             .padding(.horizontal, 8)
@@ -325,16 +313,27 @@ struct BriefingView: View {
             .background(color.opacity(0.15), in: Capsule())
     }
 
-    private func alertPill(text: String, color: Color) -> some View {
+    private func alertPill(text: String, emphasized: Bool = false) -> some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(color)
+                .fill(emphasized ? DS.Colors.danger : DS.Colors.subtext)
                 .frame(width: 6, height: 6)
-
             Text(text)
                 .font(.system(size: 12))
-                .foregroundStyle(DS.Colors.subtext)
+                .foregroundStyle(emphasized ? DS.Colors.text : DS.Colors.subtext)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
         .padding(.top, 2)
+    }
+
+    private var confidencePill: some View {
+        Text("Limited data")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(DS.Colors.subtext)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(DS.Colors.subtext.opacity(0.12), in: Capsule())
     }
 }

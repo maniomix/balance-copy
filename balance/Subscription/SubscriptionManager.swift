@@ -24,15 +24,11 @@ final class SubscriptionManager: ObservableObject {
     
     // MARK: - Computed
     
-    /// True if user has active subscription OR is in trial
-    var isPro: Bool {
-        switch status {
-        case .trial, .active:
-            return true
-        case .free, .expired, .canceled:
-            return false
-        }
-    }
+    /// Paywall gates removed — every user is treated as Pro.
+    /// Keeping the computed var and `status` enum so the ProfileView / Settings
+    /// plan-status card keeps rendering without further refactor; it just
+    /// always reports Pro.
+    var isPro: Bool { true }
     
     /// Check if free user can still add transactions
     func canAddTransaction(currentCount: Int) -> Bool {

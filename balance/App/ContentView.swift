@@ -67,6 +67,7 @@ struct ContentView: View {
         HouseholdManager.shared.sweepOrphanSplitExpenses(
             knownTransactionIds: Set(store.transactions.map(\.id))
         )
+        HouseholdManager.shared.sweepOrphanSettlements()
 
         // 2. Sync from cloud in background
         Task {
@@ -225,6 +226,14 @@ struct ContentView: View {
                         await Notifications.syncAll(store: store)
                     }
                 }
+
+                // Phase 6: keep the global category registry fresh so render
+                // sites without a Store binding (charts, chips, AI markdown)
+                // can resolve custom icon/colour from the very first frame.
+                CategoryRegistry.shared.update(from: store)
+            }
+            .onChange(of: store.customCategoriesWithIcons) { _, _ in
+                CategoryRegistry.shared.update(from: store)
             }
             .onChange(of: store) { _, newStore in
                 // هر تغییری در store (اضافه/ادیت/حذف ترنزکشن)
@@ -280,7 +289,10 @@ struct ContentView: View {
                 case "budget":          selectedTab = .budget
                 case "subscriptions":   selectedTab = .more
                 case "forecast":        selectedTab = .insights
+                case "insights":        selectedTab = .insights
+                case "transactions":    selectedTab = .transactions
                 case "accounts":        selectedTab = .more
+                case "goals":           selectedTab = .goals
                 default: break
                 }
             }

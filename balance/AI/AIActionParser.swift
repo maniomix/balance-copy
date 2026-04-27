@@ -72,11 +72,10 @@ enum AIActionParser {
     // MARK: - Text Cleaning
 
     /// Clean up the text portion of the response.
+    /// Preserves markdown formatting (**bold**, *italic*, bullets, etc.)
+    /// since AIMarkdownText renders them as rich text.
     private static func cleanText(_ raw: String) -> String {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Remove markdown artifacts the LLM might add
-        text = text.replacingOccurrences(of: "**", with: "")
-        text = text.replacingOccurrences(of: "```", with: "")
         // Remove leading "Text:" or "Response:" labels
         if let range = text.range(of: "^(Text|Response):\\s*", options: .regularExpression) {
             text = String(text[range.upperBound...])
@@ -118,7 +117,8 @@ enum AIActionParser {
                 return rawActions.compactMap { $0.toAIAction() }
             }
 
-            print("[AIActionParser] Failed to decode actions: \(error.localizedDescription)")
+            SecureLogger.info("[AIActionParser] Failed to decode actions: \(error.localizedDescription)")
+            SecureLogger.info("[AIActionParser] Raw JSON: \(cleaned.prefix(200))")
             return []
         }
     }
@@ -137,7 +137,6 @@ enum AIActionParser {
         )
 
         // Fix single quotes → double quotes (only outside of already double-quoted strings)
-        // This is a simple heuristic — works for most LLM output
         if !result.contains("\"") && result.contains("'") {
             result = result.replacingOccurrences(of: "'", with: "\"")
         }
@@ -151,6 +150,27 @@ enum AIActionParser {
         if let lastBracket = result.lastIndex(where: { $0 == "]" || $0 == "}" }) {
             result = String(result[...lastBracket])
         }
+
+        // Fix truncated JSON — if array/object brackets don't balance, try to close them
+        let openBrackets = result.filter { $0 == "[" }.count
+        let closeBrackets = result.filter { $0 == "]" }.count
+        let openBraces = result.filter { $0 == "{" }.count
+        let closeBraces = result.filter { $0 == "}" }.count
+
+        // Close unclosed braces/brackets (truncated generation)
+        for _ in 0..<(openBraces - closeBraces) {
+            result += "}"
+        }
+        for _ in 0..<(openBrackets - closeBrackets) {
+            result += "]"
+        }
+
+        // Remove incomplete key-value pairs at the end (e.g., `"key": ` with no value)
+        result = result.replacingOccurrences(
+            of: ",\\s*\"[^\"]*\"\\s*:\\s*[\\]\\}]",
+            with: "}",
+            options: .regularExpression
+        )
 
         return result
     }
@@ -204,7 +224,7 @@ private struct RawAction: Decodable {
         let normalizedType = normalizeActionType(type)
 
         guard let actionType = AIAction.ActionType(rawValue: normalizedType) else {
-            print("[AIActionParser] Unknown action type: \(type) (normalized: \(normalizedType))")
+            SecureLogger.info("[AIActionParser] Unknown action type: \(type) (normalized: \(normalizedType))")
             return nil
         }
 
@@ -290,6 +310,23 @@ private struct RawAction: Decodable {
     private func normalizeCategory(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
         let lower = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Phase 5: if the raw value matches one of the user's custom
+        // categories (case-insensitive), return `custom:CanonicalName`
+        // BEFORE we hit the alias map — otherwise "coffee" would be
+        // rewritten to "dining" even when the user has a "Coffee" custom.
+        // Also handle the "custom:Name" form here so the casing is normalized.
+        if lower.hasPrefix("custom:") {
+            let stripped = String(raw.dropFirst("custom:".count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let canonical = CategoryRegistry.shared.canonicalCustomName(for: stripped) {
+                return "custom:\(canonical)"
+            }
+            return raw  // unknown custom — keep as-is, will become a new custom on use
+        }
+        if let canonical = CategoryRegistry.shared.canonicalCustomName(for: lower) {
+            return "custom:\(canonical)"
+        }
 
         // Map common aliases
         let categoryMap: [String: String] = [
@@ -450,16 +487,27 @@ enum AnyCodableValue: Decodable {
     case int(Int)
     case double(Double)
     case bool(Bool)
+    case array([AnyCodableValue])
+    case object([String: AnyCodableValue])
     case null
 
     init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if let v = try? container.decode(Int.self) { self = .int(v) }
-        else if let v = try? container.decode(Double.self) { self = .double(v) }
-        else if let v = try? container.decode(Bool.self) { self = .bool(v) }
-        else if let v = try? container.decode(String.self) { self = .string(v) }
-        else if container.decodeNil() { self = .null }
-        else { self = .null }
+        // Try single value first
+        if let container = try? decoder.singleValueContainer() {
+            if let v = try? container.decode(Int.self) { self = .int(v); return }
+            if let v = try? container.decode(Double.self) { self = .double(v); return }
+            if let v = try? container.decode(Bool.self) { self = .bool(v); return }
+            if let v = try? container.decode(String.self) { self = .string(v); return }
+            if container.decodeNil() { self = .null; return }
+        }
+        // Try nested structures (LLM sometimes outputs nested objects)
+        if let arr = try? decoder.singleValueContainer().decode([AnyCodableValue].self) {
+            self = .array(arr); return
+        }
+        if let obj = try? decoder.singleValueContainer().decode([String: AnyCodableValue].self) {
+            self = .object(obj); return
+        }
+        self = .null
     }
 
     var stringValue: String? {

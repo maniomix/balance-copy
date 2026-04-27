@@ -54,7 +54,7 @@ class AccountManager: ObservableObject {
                 .execute()
                 .value
 
-            self.accounts = response
+            self.accounts = Self.sortByDisplayOrder(response)
             SecureLogger.info("Fetched \(response.count) accounts")
         } catch {
             self.errorMessage = AppConfig.shared.safeErrorMessage(
@@ -143,6 +143,74 @@ class AccountManager: ObservableObject {
         archived.isArchived = true
         archived.updatedAt = Date()
         return await updateAccount(archived)
+    }
+
+    /// Restore a previously archived account.
+    func restoreArchived(_ account: Account) async -> Bool {
+        var restored = account
+        restored.isArchived = false
+        restored.updatedAt = Date()
+        return await updateAccount(restored)
+    }
+
+    // MARK: - Reorder
+
+    /// Persist a new ordering. `orderedIds` is the desired order; entries not
+    /// in the array are left alone. Updates `displayOrder` in place + DB.
+    @discardableResult
+    func reorder(_ orderedIds: [UUID]) async -> Bool {
+        var ok = true
+        for (index, id) in orderedIds.enumerated() {
+            guard var acc = accounts.first(where: { $0.id == id }) else { continue }
+            guard acc.displayOrder != index else { continue }
+            acc.displayOrder = index
+            acc.updatedAt = Date()
+            if await updateAccount(acc) == false { ok = false }
+        }
+        return ok
+    }
+
+    // MARK: - Hard-Delete Policy
+
+    /// How many transactions in `store` reference this account. Phase 5 uses
+    /// this to block hard delete and prompt for reassignment.
+    func transactionReferenceCount(for account: Account, in store: Store) -> Int {
+        store.transactions.reduce(0) { $0 + (($1.accountId == account.id) ? 1 : 0) }
+    }
+
+    // MARK: - Merge
+
+    /// Merge `source` into `target`: re-points all source transactions to
+    /// target, sums the balance into target, archives source. Refuses when
+    /// currencies differ — caller should resolve first.
+    @discardableResult
+    func mergeInto(source: Account, target: Account, store: inout Store) async -> Bool {
+        guard source.id != target.id else { return false }
+        guard source.currency == target.currency else {
+            self.errorMessage = "Cannot merge accounts with different currencies."
+            return false
+        }
+        for i in store.transactions.indices where store.transactions[i].accountId == source.id {
+            store.transactions[i].accountId = target.id
+        }
+        var merged = target
+        merged.currentBalance += source.currentBalance
+        merged.updatedAt = Date()
+        let updateOk = await updateAccount(merged)
+        let archiveOk = await archiveAccount(source)
+        return updateOk && archiveOk
+    }
+
+    // MARK: - Sorting
+
+    /// Stable sort: displayOrder asc, then createdAt desc as tie-breaker.
+    static func sortByDisplayOrder(_ accounts: [Account]) -> [Account] {
+        accounts.sorted { a, b in
+            if a.displayOrder != b.displayOrder {
+                return a.displayOrder < b.displayOrder
+            }
+            return a.createdAt > b.createdAt
+        }
     }
 
     // MARK: - Delete Account (Hard Delete)
@@ -266,12 +334,22 @@ class AccountManager: ObservableObject {
         activeAccounts.filter { $0.type.isLiability }
     }
 
+    /// Assets included in the net-worth roll-up (respects `includeInNetWorth`).
+    var assetAccountsForNetWorth: [Account] {
+        assetAccounts.filter { $0.includeInNetWorth }
+    }
+
+    /// Liabilities included in the net-worth roll-up (respects `includeInNetWorth`).
+    var liabilityAccountsForNetWorth: [Account] {
+        liabilityAccounts.filter { $0.includeInNetWorth }
+    }
+
     var totalAssets: Double {
-        assetAccounts.reduce(0) { $0 + $1.currentBalance }
+        assetAccountsForNetWorth.reduce(0) { $0 + $1.currentBalance }
     }
 
     var totalLiabilities: Double {
-        liabilityAccounts.reduce(0) { $0 + abs($1.currentBalance) }
+        liabilityAccountsForNetWorth.reduce(0) { $0 + abs($1.currentBalance) }
     }
 
     var netWorth: Double {
@@ -293,12 +371,12 @@ class AccountManager: ObservableObject {
 
     /// Total assets converted to the app's default currency.
     var convertedTotalAssets: Double {
-        assetAccounts.reduce(0) { $0 + convertedBalance(for: $1) }
+        assetAccountsForNetWorth.reduce(0) { $0 + convertedBalance(for: $1) }
     }
 
     /// Total liabilities converted to the app's default currency.
     var convertedTotalLiabilities: Double {
-        liabilityAccounts.reduce(0) { $0 + abs(convertedBalance(for: $1)) }
+        liabilityAccountsForNetWorth.reduce(0) { $0 + abs(convertedBalance(for: $1)) }
     }
 
     /// Net worth in the app's default currency.

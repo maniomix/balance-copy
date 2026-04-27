@@ -15,6 +15,8 @@ struct Household: Identifiable, Codable, Hashable {
     var createdBy: String             // userId of creator
     var members: [HouseholdMember]
     var inviteCode: String            // 6-char code for inviting partner
+    /// Optional sub-groups (e.g. "Parents", "Kids"). Future per-group budgets.
+    var groups: [HouseholdGroup]
     var createdAt: Date
     var updatedAt: Date
 
@@ -24,6 +26,7 @@ struct Household: Identifiable, Codable, Hashable {
         createdBy: String,
         members: [HouseholdMember] = [],
         inviteCode: String = Household.generateInviteCode(),
+        groups: [HouseholdGroup] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -32,8 +35,25 @@ struct Household: Identifiable, Codable, Hashable {
         self.createdBy = createdBy
         self.members = members
         self.inviteCode = inviteCode
+        self.groups = groups
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, createdBy, members, inviteCode, groups, createdAt, updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        createdBy = try c.decode(String.self, forKey: .createdBy)
+        members = try c.decode([HouseholdMember].self, forKey: .members)
+        inviteCode = try c.decode(String.self, forKey: .inviteCode)
+        groups = (try? c.decode([HouseholdGroup].self, forKey: .groups)) ?? []
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
     }
 
     static func generateInviteCode() -> String {
@@ -46,6 +66,8 @@ struct Household: Identifiable, Codable, Hashable {
     var partner: HouseholdMember? { members.first(where: { $0.role == .partner }) }
     var viewers: [HouseholdMember] { members.filter { $0.role == .viewer } }
     var memberCount: Int { members.count }
+    /// Active (non-archived) members — excludes archived ledger-history keepers.
+    var activeMembers: [HouseholdMember] { members.filter { $0.isActive } }
 
     func member(for userId: String) -> HouseholdMember? {
         members.first(where: { $0.userId == userId })
@@ -53,11 +75,38 @@ struct Household: Identifiable, Codable, Hashable {
 
     func canEdit(userId: String) -> Bool {
         guard let m = member(for: userId) else { return false }
-        return m.role == .owner || m.role == .partner
+        return m.role.canEditBudgets
     }
 
     func canView(userId: String) -> Bool {
         member(for: userId) != nil
+    }
+}
+
+// MARK: - Group
+
+/// Optional sub-group of members (e.g. "Parents", "Kids"). Ported from macOS.
+/// Purely descriptive for v1; future per-group budgets will reference `id`.
+struct HouseholdGroup: Identifiable, Codable, Hashable {
+    let id: UUID
+    var name: String
+    /// Hex color without `#` (e.g. "3DB9FC"). Free-form; UI decides rendering.
+    var colorHex: String
+    var memberIds: [UUID]
+    var createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        colorHex: String = "3DB9FC",
+        memberIds: [UUID] = [],
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.name = name
+        self.colorHex = colorHex
+        self.memberIds = memberIds
+        self.createdAt = createdAt
     }
 }
 
@@ -75,6 +124,11 @@ struct HouseholdMember: Identifiable, Codable, Hashable {
     var sharedAccountIds: [String]?
     /// If false, personal transactions aren't visible to other members.
     var shareTransactions: Bool
+    /// Archived members are hidden from pickers but kept for ledger history.
+    var isActive: Bool
+    var archivedAt: Date?
+    /// HouseholdGroup.id values this member belongs to.
+    var groupIds: [UUID]
 
     init(
         id: UUID = UUID(),
@@ -84,7 +138,10 @@ struct HouseholdMember: Identifiable, Codable, Hashable {
         role: HouseholdRole,
         joinedAt: Date = Date(),
         sharedAccountIds: [String]? = nil,
-        shareTransactions: Bool = true
+        shareTransactions: Bool = true,
+        isActive: Bool = true,
+        archivedAt: Date? = nil,
+        groupIds: [UUID] = []
     ) {
         self.id = id
         self.userId = userId
@@ -94,18 +151,46 @@ struct HouseholdMember: Identifiable, Codable, Hashable {
         self.joinedAt = joinedAt
         self.sharedAccountIds = sharedAccountIds
         self.shareTransactions = shareTransactions
+        self.isActive = isActive
+        self.archivedAt = archivedAt
+        self.groupIds = groupIds
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, userId, displayName, email, role, joinedAt
+        case sharedAccountIds, shareTransactions
+        case isActive, archivedAt, groupIds
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        userId = try c.decode(String.self, forKey: .userId)
+        displayName = try c.decode(String.self, forKey: .displayName)
+        email = (try? c.decode(String.self, forKey: .email)) ?? ""
+        role = try c.decode(HouseholdRole.self, forKey: .role)
+        joinedAt = try c.decode(Date.self, forKey: .joinedAt)
+        sharedAccountIds = try? c.decode([String]?.self, forKey: .sharedAccountIds)
+        shareTransactions = (try? c.decode(Bool.self, forKey: .shareTransactions)) ?? true
+        isActive = (try? c.decode(Bool.self, forKey: .isActive)) ?? true
+        archivedAt = try? c.decode(Date?.self, forKey: .archivedAt)
+        groupIds = (try? c.decode([UUID].self, forKey: .groupIds)) ?? []
     }
 }
 
 enum HouseholdRole: String, Codable, CaseIterable, Hashable {
     case owner
     case partner
+    case adult
+    case child
     case viewer
 
     var displayName: String {
         switch self {
         case .owner: return "Owner"
         case .partner: return "Partner"
+        case .adult: return "Adult"
+        case .child: return "Child"
         case .viewer: return "Viewer"
         }
     }
@@ -114,13 +199,34 @@ enum HouseholdRole: String, Codable, CaseIterable, Hashable {
         switch self {
         case .owner: return "crown.fill"
         case .partner: return "heart.fill"
+        case .adult: return "person.fill"
+        case .child: return "figure.child"
         case .viewer: return "eye.fill"
         }
     }
 
-    var canEditBudgets: Bool { self != .viewer }
+    /// Budgets / settings / shared goals. Children and viewers can't edit.
+    var canEditBudgets: Bool {
+        switch self {
+        case .owner, .partner, .adult: return true
+        case .child, .viewer: return false
+        }
+    }
+
+    /// Adding personal or split expenses. Only viewers are blocked.
     var canAddExpenses: Bool { self != .viewer }
+
+    /// Add / remove / role-change other members. Owner only.
     var canManageMembers: Bool { self == .owner }
+}
+
+// MARK: - Share Status
+
+/// Lifecycle of a split expense's share. Placeholder for future
+/// partial-settlement states. For v1 it mirrors `SplitExpense.isSettled`.
+enum ShareStatus: String, Codable, Hashable {
+    case owed
+    case settled
 }
 
 // MARK: - Shared Budget
@@ -202,6 +308,9 @@ struct SplitExpense: Identifiable, Codable, Hashable {
         self.settledAt = settledAt
         self.createdAt = createdAt
     }
+
+    /// Current lifecycle state. Derived from `isSettled` for v1.
+    var status: ShareStatus { isSettled ? .settled : .owed }
 
     /// Compute how much each member owes / is owed.
     func splits(members: [HouseholdMember]) -> [MemberSplit] {

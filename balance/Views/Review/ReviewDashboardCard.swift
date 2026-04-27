@@ -48,9 +48,16 @@ struct ReviewDashboardCard: View {
 
                             Spacer()
 
+                            Text("Review")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(DS.Colors.accent)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(DS.Colors.accentLight, in: Capsule())
+
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(DS.Colors.subtext.opacity(0.3))
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(DS.Colors.subtext.opacity(0.4))
                         }
 
                         // ── Issue type breakdown ──
@@ -75,21 +82,25 @@ struct ReviewDashboardCard: View {
 
                         // ── Top issue preview ──
                         if let top = engine.pendingItems.first {
-                            HStack(spacing: 8) {
-                                Rectangle()
-                                    .fill(DS.Colors.warning.opacity(0.4))
-                                    .frame(width: 3)
-                                    .clipShape(Capsule())
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "sparkle.magnifyingglass")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(DS.Colors.subtext)
+                                    .padding(.top, 1)
 
                                 Text(top.reason)
                                     .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(DS.Colors.subtext)
+                                    .foregroundStyle(DS.Colors.text.opacity(0.85))
                                     .lineLimit(2)
                                     .fixedSize(horizontal: false, vertical: true)
+                                    .multilineTextAlignment(.leading)
 
                                 Spacer(minLength: 0)
                             }
-                            .frame(minHeight: 28)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 9)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(DS.Colors.surface2.opacity(0.6), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                         }
                     }
                 }
@@ -113,10 +124,10 @@ struct ReviewDashboardCard: View {
             chips.append(IssueChip(icon: "doc.on.doc.fill", label: "\(engine.duplicateCount) duplicate", color: DS.Colors.danger))
         }
         if engine.spikeCount > 0 {
-            chips.append(IssueChip(icon: "arrow.up.right", label: "\(engine.spikeCount) spike", color: Color(hexValue: 0x9B59B6)))
+            chips.append(IssueChip(icon: "arrow.up.right", label: "\(engine.spikeCount) spike", color: DS.Colors.warning))
         }
         if engine.uncategorizedCount > 0 {
-            chips.append(IssueChip(icon: "tag.slash.fill", label: "\(engine.uncategorizedCount) uncat.", color: DS.Colors.warning))
+            chips.append(IssueChip(icon: "tag.slash.fill", label: "\(engine.uncategorizedCount) untagged", color: DS.Colors.subtext))
         }
         if engine.recurringCandidateCount > 0 && chips.isEmpty {
             chips.append(IssueChip(icon: "repeat", label: "\(engine.recurringCandidateCount) recurring", color: DS.Colors.accent))

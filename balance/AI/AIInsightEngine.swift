@@ -39,6 +39,24 @@ class AIInsightEngine: ObservableObject {
         new.append(contentsOf: duplicateInsights(store: store))
         new.append(contentsOf: recurringInsights(store: store))
 
+        // Phase 2: Store-based detector pack (cashflow runway, income drop,
+        // recurring overdue, day spike, new merchant, duplicate transactions).
+        new.append(contentsOf: AIInsightDetectorsPack.all(store: store))
+
+        // Drop any insights past their expiresAt.
+        let now = Date()
+        new.removeAll { ($0.expiresAt.map { $0 < now }) ?? false }
+
+        // Dedupe by dedupeKey (first-write wins). Insights without a
+        // dedupeKey are preserved as-is — they're ad-hoc event insights.
+        new = dedupeByKey(new)
+
+        // Filter out auto-muted detectors.
+        new.removeAll { insight in
+            guard insight.dedupeKey != nil else { return false }
+            return InsightTelemetry.shared.isMuted(insight.detectorID)
+        }
+
         // Sort by severity (critical first), then recency
         new.sort { a, b in
             if a.severity != b.severity { return severityOrder(a.severity) < severityOrder(b.severity) }
@@ -46,6 +64,17 @@ class AIInsightEngine: ObservableObject {
         }
 
         insights = new
+
+        // Record a "shown" per surviving detector-ID.
+        for insight in new where insight.dedupeKey != nil {
+            InsightTelemetry.shared.recordShown(detectorID: insight.detectorID)
+        }
+
+        // Phase 7: optional LLM enrichment of the top few items' advice.
+        Task { [weak self] in
+            let enriched = await InsightEnricher.enrich(new)
+            await MainActor.run { self?.insights = enriched }
+        }
         morningBriefing = buildMorningBriefing(store: store)
 
         // Phase 5: Run event bus daily check
@@ -430,9 +459,19 @@ class AIInsightEngine: ObservableObject {
 
         guard !parts.isEmpty else { return nil }
 
+        let hour = Calendar.current.component(.hour, from: Date())
+        let greeting: String = {
+            switch hour {
+            case 5..<12:  return "Good morning"
+            case 12..<17: return "Good afternoon"
+            case 17..<22: return "Good evening"
+            default:      return "Late night check-in"
+            }
+        }()
+
         return AIInsight(
             type: .morningBriefing,
-            title: "Good morning",
+            title: greeting,
             body: parts.joined(separator: "\n"),
             severity: .info
         )
@@ -497,6 +536,28 @@ class AIInsightEngine: ObservableObject {
         case .info: return 2
         case .positive: return 3
         }
+    }
+
+    // MARK: - Phase 2: Dedupe & Enrichment
+
+    /// First-write wins for each `dedupeKey`. Insights without a dedupeKey
+    /// pass through unchanged — they're ad-hoc/event insights.
+    private func dedupeByKey(_ insights: [AIInsight]) -> [AIInsight] {
+        var seen = Set<String>()
+        var out: [AIInsight] = []
+        out.reserveCapacity(insights.count)
+        for insight in insights {
+            guard let key = insight.dedupeKey else { out.append(insight); continue }
+            if seen.insert(key).inserted { out.append(insight) }
+        }
+        return out
+    }
+
+    /// User-facing opt-in for LLM advice rewrites. Off by default — heuristic
+    /// advice is already actionable; enrichment is a polish layer.
+    @Published var isInsightEnrichmentEnabled: Bool =
+        UserDefaults.standard.bool(forKey: "ai.insightEnrichment") {
+        didSet { UserDefaults.standard.set(isInsightEnrichmentEnabled, forKey: "ai.insightEnrichment") }
     }
 
     // MARK: - Morning Briefing Push Notification

@@ -8,7 +8,13 @@
 
 /* Begin PBXBuildFile section */
 		3C012F3F2F88352500C85A79 /* LlamaSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 3C012F3E2F88352500C85A79 /* LlamaSwift */; };
+		3C04DE582F8BE0CB001AF1EC /* SkeletonUI in Frameworks */ = {isa = PBXBuildFile; productRef = 3C04DE572F8BE0CB001AF1EC /* SkeletonUI */; };
+		3C04DE5B2F8BE0D8001AF1EC /* Flow in Frameworks */ = {isa = PBXBuildFile; productRef = 3C04DE5A2F8BE0D8001AF1EC /* Flow */; };
+		3C04DE5E2F8BE0EE001AF1EC /* ExyteGrid in Frameworks */ = {isa = PBXBuildFile; productRef = 3C04DE5D2F8BE0EE001AF1EC /* ExyteGrid */; };
 		3C76B0222F13150400223717 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = 3C76B0212F13150400223717 /* ZIPFoundation */; };
+		3C7C421E2F9D81DF0022633F /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3CBA84D92F2EA215006DB706 /* WidgetKit.framework */; };
+		3C7C421F2F9D81DF0022633F /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3CBA84DB2F2EA215006DB706 /* SwiftUI.framework */; };
+		3C7C42302F9D81E00022633F /* CentmondWidgetsExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 3C7C421D2F9D81DF0022633F /* CentmondWidgetsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3C9094682F2D6DE5002C123F /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 3C9094672F2D6DE5002C123F /* GoogleSignIn */; };
 		3C90946A2F2D6DE5002C123F /* GoogleSignInSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 3C9094692F2D6DE5002C123F /* GoogleSignInSwift */; };
 		3C9FBFFA2F682BDC00776A47 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3CBA84D92F2EA215006DB706 /* WidgetKit.framework */; };
@@ -23,6 +29,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		3C7C422E2F9D81E00022633F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3C4B99252F047DB8003DAE43 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3C7C421C2F9D81DF0022633F;
+			remoteInfo = CentmondWidgetsExtension;
+		};
 		3C9FC00A2F682BDD00776A47 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 3C4B99252F047DB8003DAE43 /* Project object */;
@@ -46,6 +59,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
+				3C7C42302F9D81E00022633F /* CentmondWidgetsExtension.appex in Embed Foundation Extensions */,
 				3C9FC00C2F682BDD00776A47 /* CentmondWidgetExtension.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
@@ -55,6 +69,7 @@
 
 /* Begin PBXFileReference section */
 		3C4B992D2F047DB8003DAE43 /* balance.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = balance.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		3C7C421D2F9D81DF0022633F /* CentmondWidgetsExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CentmondWidgetsExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		3C9FBFF92F682BDC00776A47 /* CentmondWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CentmondWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		3C9FC0112F682C2C00776A47 /* CentmondWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CentmondWidgetExtension.entitlements; sourceTree = "<group>"; };
 		3CBA84D92F2EA215006DB706 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
@@ -67,6 +82,21 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+			);
+			target = 3C4B992C2F047DB8003DAE43 /* balance */;
+		};
+		3C7C42342F9D81E00022633F /* Exceptions for "CentmondWidgets" folder in "CentmondWidgetsExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 3C7C421C2F9D81DF0022633F /* CentmondWidgetsExtension */;
+		};
+		3C7C423C2F9D83E40022633F /* Exceptions for "CentmondWidgets" folder in "balance" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				BudgetActivityAttributes.swift,
+				CycleBudgetPageIntent.swift,
 			);
 			target = 3C4B992C2F047DB8003DAE43 /* balance */;
 		};
@@ -93,6 +123,15 @@
 				3C08593A2F3D34D30065D7FD /* Exceptions for "balance" folder in "balance" target */,
 			);
 			path = balance;
+			sourceTree = "<group>";
+		};
+		3C7C42202F9D81DF0022633F /* CentmondWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				3C7C423C2F9D83E40022633F /* Exceptions for "CentmondWidgets" folder in "balance" target */,
+				3C7C42342F9D81E00022633F /* Exceptions for "CentmondWidgets" folder in "CentmondWidgetsExtension" target */,
+			);
+			path = CentmondWidgets;
 			sourceTree = "<group>";
 		};
 		3C9FBFFC2F682BDC00776A47 /* CentmondWidget */ = {
@@ -123,9 +162,21 @@
 				3CB0A4682F43BF8D008FD90A /* Storage in Frameworks */,
 				3CB0A4662F43BF8D008FD90A /* Realtime in Frameworks */,
 				3C90946A2F2D6DE5002C123F /* GoogleSignInSwift in Frameworks */,
+				3C04DE582F8BE0CB001AF1EC /* SkeletonUI in Frameworks */,
+				3C04DE5B2F8BE0D8001AF1EC /* Flow in Frameworks */,
 				3C9094682F2D6DE5002C123F /* GoogleSignIn in Frameworks */,
 				3CB0A46A2F43BF8D008FD90A /* Supabase in Frameworks */,
 				3CB0A4602F43BF8D008FD90A /* Auth in Frameworks */,
+				3C04DE5E2F8BE0EE001AF1EC /* ExyteGrid in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3C7C421A2F9D81DF0022633F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3C7C421F2F9D81DF0022633F /* SwiftUI.framework in Frameworks */,
+				3C7C421E2F9D81DF0022633F /* WidgetKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -155,6 +206,7 @@
 				3C4B992F2F047DB8003DAE43 /* balance */,
 				AA00020000000000AA000002 /* balanceTests */,
 				3C9FBFFC2F682BDC00776A47 /* CentmondWidget */,
+				3C7C42202F9D81DF0022633F /* CentmondWidgets */,
 				3CBA84D82F2EA215006DB706 /* Frameworks */,
 				3C4B992E2F047DB8003DAE43 /* Products */,
 			);
@@ -166,6 +218,7 @@
 				3C4B992D2F047DB8003DAE43 /* balance.app */,
 				3C9FBFF92F682BDC00776A47 /* CentmondWidgetExtension.appex */,
 				AA00010000000000AA000001 /* balanceTests.xctest */,
+				3C7C421D2F9D81DF0022633F /* CentmondWidgetsExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -195,6 +248,7 @@
 			);
 			dependencies = (
 				3C9FC00B2F682BDD00776A47 /* PBXTargetDependency */,
+				3C7C422F2F9D81E00022633F /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				3C4B992F2F047DB8003DAE43 /* balance */,
@@ -211,10 +265,35 @@
 				3CB0A4672F43BF8D008FD90A /* Storage */,
 				3CB0A4692F43BF8D008FD90A /* Supabase */,
 				3C012F3E2F88352500C85A79 /* LlamaSwift */,
+				3C04DE572F8BE0CB001AF1EC /* SkeletonUI */,
+				3C04DE5A2F8BE0D8001AF1EC /* Flow */,
+				3C04DE5D2F8BE0EE001AF1EC /* ExyteGrid */,
 			);
 			productName = balance;
 			productReference = 3C4B992D2F047DB8003DAE43 /* balance.app */;
 			productType = "com.apple.product-type.application";
+		};
+		3C7C421C2F9D81DF0022633F /* CentmondWidgetsExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3C7C42312F9D81E00022633F /* Build configuration list for PBXNativeTarget "CentmondWidgetsExtension" */;
+			buildPhases = (
+				3C7C42192F9D81DF0022633F /* Sources */,
+				3C7C421A2F9D81DF0022633F /* Frameworks */,
+				3C7C421B2F9D81DF0022633F /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				3C7C42202F9D81DF0022633F /* CentmondWidgets */,
+			);
+			name = CentmondWidgetsExtension;
+			packageProductDependencies = (
+			);
+			productName = CentmondWidgetsExtension;
+			productReference = 3C7C421D2F9D81DF0022633F /* CentmondWidgetsExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 		3C9FBFF82F682BDC00776A47 /* CentmondWidgetExtension */ = {
 			isa = PBXNativeTarget;
@@ -268,11 +347,14 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2630;
+				LastSwiftUpdateCheck = 2640;
 				LastUpgradeCheck = 2630;
 				TargetAttributes = {
 					3C4B992C2F047DB8003DAE43 = {
 						CreatedOnToolsVersion = 26.2;
+					};
+					3C7C421C2F9D81DF0022633F = {
+						CreatedOnToolsVersion = 26.4.1;
 					};
 					3C9FBFF82F682BDC00776A47 = {
 						CreatedOnToolsVersion = 26.3;
@@ -297,6 +379,9 @@
 				3C9094662F2D6DE5002C123F /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 				3CB0A45E2F43BF8D008FD90A /* XCRemoteSwiftPackageReference "supabase-swift" */,
 				3C012F3D2F88352500C85A79 /* XCRemoteSwiftPackageReference "llama" */,
+				3C04DE562F8BE0CB001AF1EC /* XCRemoteSwiftPackageReference "SkeletonUI" */,
+				3C04DE592F8BE0D8001AF1EC /* XCRemoteSwiftPackageReference "SwiftUI-Flow" */,
+				3C04DE5C2F8BE0EE001AF1EC /* XCRemoteSwiftPackageReference "Grid" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3C4B992E2F047DB8003DAE43 /* Products */;
@@ -306,12 +391,20 @@
 				3C4B992C2F047DB8003DAE43 /* balance */,
 				3C9FBFF82F682BDC00776A47 /* CentmondWidgetExtension */,
 				AA00030000000000AA000003 /* balanceTests */,
+				3C7C421C2F9D81DF0022633F /* CentmondWidgetsExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		3C4B992B2F047DB8003DAE43 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3C7C421B2F9D81DF0022633F /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -342,6 +435,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		3C7C42192F9D81DF0022633F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		3C9FBFF52F682BDC00776A47 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -359,6 +459,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		3C7C422F2F9D81E00022633F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3C7C421C2F9D81DF0022633F /* CentmondWidgetsExtension */;
+			targetProxy = 3C7C422E2F9D81E00022633F /* PBXContainerItemProxy */;
+		};
 		3C9FC00B2F682BDD00776A47 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 3C9FBFF82F682BDC00776A47 /* CentmondWidgetExtension */;
@@ -587,6 +692,68 @@
 			};
 			name = Release;
 		};
+		3C7C42322F9D81E00022633F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2645K3Q527;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CentmondWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = CentmondWidgets;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = mani.balance.CentmondWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		3C7C42332F9D81E00022633F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2645K3Q527;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CentmondWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = CentmondWidgets;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = mani.balance.CentmondWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		3C9FC00D2F682BDD00776A47 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -714,6 +881,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		3C7C42312F9D81E00022633F /* Build configuration list for PBXNativeTarget "CentmondWidgetsExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3C7C42322F9D81E00022633F /* Debug */,
+				3C7C42332F9D81E00022633F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		3C9FC00F2F682BDD00776A47 /* Build configuration list for PBXNativeTarget "CentmondWidgetExtension" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -741,6 +917,30 @@
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 2.8728.0;
+			};
+		};
+		3C04DE562F8BE0CB001AF1EC /* XCRemoteSwiftPackageReference "SkeletonUI" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/CSolanaM/SkeletonUI";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.2;
+			};
+		};
+		3C04DE592F8BE0D8001AF1EC /* XCRemoteSwiftPackageReference "SwiftUI-Flow" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/tevelee/SwiftUI-Flow";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.1.1;
+			};
+		};
+		3C04DE5C2F8BE0EE001AF1EC /* XCRemoteSwiftPackageReference "Grid" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/exyte/Grid";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.5.0;
 			};
 		};
 		3C76B0202F13150400223717 /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
@@ -774,6 +974,21 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 3C012F3D2F88352500C85A79 /* XCRemoteSwiftPackageReference "llama" */;
 			productName = LlamaSwift;
+		};
+		3C04DE572F8BE0CB001AF1EC /* SkeletonUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3C04DE562F8BE0CB001AF1EC /* XCRemoteSwiftPackageReference "SkeletonUI" */;
+			productName = SkeletonUI;
+		};
+		3C04DE5A2F8BE0D8001AF1EC /* Flow */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3C04DE592F8BE0D8001AF1EC /* XCRemoteSwiftPackageReference "SwiftUI-Flow" */;
+			productName = Flow;
+		};
+		3C04DE5D2F8BE0EE001AF1EC /* ExyteGrid */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3C04DE5C2F8BE0EE001AF1EC /* XCRemoteSwiftPackageReference "Grid" */;
+			productName = ExyteGrid;
 		};
 		3C76B0212F13150400223717 /* ZIPFoundation */ = {
 			isa = XCSwiftPackageProductDependency;
