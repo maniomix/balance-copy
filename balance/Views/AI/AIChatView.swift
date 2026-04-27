@@ -1,4 +1,6 @@
 import SwiftUI
+import SwiftData
+import SkeletonUI
 import UniformTypeIdentifiers
 
 // ============================================================
@@ -12,16 +14,22 @@ import UniformTypeIdentifiers
 
 struct AIChatView: View {
     @Binding var store: Store
+    var initialInput: String? = nil
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
+    @State private var didSeedInput: Bool = false
 
     @StateObject private var conversation = AIConversation()
+    @Environment(\.modelContext) private var modelContext
+    @State private var currentSession: ChatSession?
+    @State private var persistedMessageIDs: Set<UUID> = []
     @State private var input: String = ""
     @State private var isStreaming: Bool = false
     @State private var streamingText: String = ""
+    @State private var streamingPhase: StreamingPhase = .thinking
     @State private var showReceiptScanner: Bool = false
 
-    private let aiManager = AIManager.shared
+    @StateObject private var aiManager = AIManager.shared
     private let trustManager = AITrustManager.shared
     @StateObject private var actionHistory = AIActionHistory.shared
     @State private var showDownloadConfirm = false
@@ -35,6 +43,10 @@ struct AIChatView: View {
     @State private var showMemory: Bool = false
     @State private var showOptimizer: Bool = false
     @State private var showModeSettings: Bool = false
+    @State private var showChatHistory: Bool = false
+    @State private var sessionToRename: ChatSession?
+    @State private var renameText: String = ""
+    @State private var historyRefreshToken: UUID = UUID()
 
     /// Trust context preserved between classify and confirmAndExecute.
     @State private var pendingTrustContext: PendingTrustContext? = nil
@@ -60,13 +72,35 @@ struct AIChatView: View {
                         inputBar
                     }
                 }
-            .background(DS.Colors.bg)
+            .background(
+                ZStack {
+                    DS.Colors.bg
+                    if isStreaming {
+                        AIGeneratingGradient(cornerRadius: 0)
+                            .transition(.asymmetric(
+                                insertion: .opacity.animation(.easeIn(duration: 0.4)),
+                                removal:   .opacity.animation(.easeOut(duration: 1.6))
+                            ))
+                    }
+                }
+                .ignoresSafeArea()
+                .animation(.easeInOut(duration: 0.4), value: isStreaming)
+            )
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button { dismiss() } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(DS.Colors.subtext)
+                    HStack(spacing: 8) {
+                        Button { dismiss() } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(DS.Colors.subtext)
+                        }
+                        Button {
+                            showChatHistory = true
+                        } label: {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .foregroundStyle(DS.Colors.subtext)
+                        }
+                        .accessibilityLabel("Chat history")
                     }
                 }
                 ToolbarItem(placement: .principal) {
@@ -83,7 +117,14 @@ struct AIChatView: View {
                             }
                             .accessibilityLabel("Undo last AI action")
                         }
-                        // Menu button — options coming soon
+                        Button {
+                            startNewChat()
+                        } label: {
+                            Image(systemName: "square.and.pencil")
+                                .font(.system(size: 17))
+                                .foregroundStyle(DS.Colors.accent)
+                        }
+                        .accessibilityLabel("New chat")
                         Button {
                             showAIMenu = true
                         } label: {
@@ -99,7 +140,27 @@ struct AIChatView: View {
                     modelLoadingOverlay
                 }
             }
-            .onAppear { loadModelIfNeeded() }
+            .onAppear {
+                loadModelIfNeeded()
+                loadPersistedSessionIfNeeded()
+                if !didSeedInput, let seed = initialInput, !seed.isEmpty {
+                    input = seed
+                    didSeedInput = true
+                }
+                // Phase 5: keep the AI subsystems aware of user-defined categories
+                CategoryRegistry.shared.update(from: store)
+            }
+            .onChange(of: store.customCategoriesWithIcons) { _, _ in
+                CategoryRegistry.shared.update(from: store)
+            }
+            .onDisappear {
+                // User left the chat — schedule an aggressive unload so the
+                // model frees its RAM if they don't come back soon.
+                aiManager.requestUnloadSoon()
+            }
+            .onChange(of: conversation.messages.count) { _, _ in
+                persistNewMessages()
+            }
             .sheet(isPresented: $showReceiptScanner) {
                 AIReceiptScannerView(store: $store)
             }
@@ -126,6 +187,9 @@ struct AIChatView: View {
             }
             .sheet(isPresented: $showModeSettings) {
                 AIModeSettingsView()
+            }
+            .sheet(isPresented: $showChatHistory) {
+                chatHistorySheet
             }
             .alert("Download AI Model?", isPresented: $showDownloadConfirm) {
                 Button("Download (\(AIManager.modelDownloadSizeLabel))", role: .none) {
@@ -417,9 +481,7 @@ struct AIChatView: View {
             if message.role == .user { Spacer(minLength: 60) }
 
             VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 8) {
-                Text(message.content)
-                    .font(DS.Typography.body)
-                    .foregroundStyle(message.role == .user ? .white : DS.Colors.text)
+                AIMarkdownText(text: message.content, role: message.role)
                     .padding(12)
                     .background(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -427,36 +489,67 @@ struct AIChatView: View {
                                   ? DS.Colors.accent
                                   : (colorScheme == .dark ? DS.Colors.surfaceElevated : DS.Colors.surface))
                     )
+                    .contextMenu {
+                        Button {
+                            UIPasteboard.general.string = message.content
+                        } label: {
+                            Label("Copy", systemImage: "doc.on.doc")
+                        }
+                        if message.role == .user {
+                            Button {
+                                input = message.content
+                                isInputFocused = true
+                            } label: {
+                                Label("Edit", systemImage: "pencil")
+                            }
+                        }
+                    }
 
                 // Action cards for assistant messages
                 if let actions = message.actions, !actions.isEmpty {
+                    let analysisTypes: Set<AIAction.ActionType> = [.analyze, .compare, .forecast, .advice]
+
+                    // Rich saving tips card for advice/analysis actions
+                    if let adviceAction = actions.first(where: { analysisTypes.contains($0.type) }),
+                       let tipsCard = AISavingTipsCard.build(
+                           store: store,
+                           title: adviceAction.type == .advice ? "Saving Tips" : "Spending Analysis",
+                           tipsText: adviceAction.params.analysisText
+                       ) {
+                        tipsCard
+                    }
+
+                    // Mutation action cards (non-analysis)
                     let grouped = Self.groupActions(actions)
                     ForEach(grouped, id: \.id) { group in
-                        if group.count > 1 {
-                            GroupedActionCard(
-                                actions: group.actions,
-                                onConfirmAll: {
-                                    for a in group.actions where a.status == .pending {
-                                        confirmAndExecute(a.id)
+                        // Skip analysis-only groups (already shown as rich card above)
+                        if group.actions.contains(where: { !analysisTypes.contains($0.type) }) {
+                            if group.count > 1 {
+                                GroupedActionCard(
+                                    actions: group.actions,
+                                    onConfirmAll: {
+                                        for a in group.actions where a.status == .pending {
+                                            confirmAndExecute(a.id)
+                                        }
+                                    },
+                                    onRejectAll: {
+                                        for a in group.actions {
+                                            // Phase 7: Record rejection pattern
+                                            AIMemoryStore.shared.recordApproval(actionType: a.type.rawValue, approved: false)
+                                            conversation.rejectAction(a.id)
+                                        }
                                     }
-                                },
-                                onRejectAll: {
-                                    for a in group.actions {
-                                        // Phase 7: Record rejection pattern
+                                )
+                            } else if let action = group.actions.first {
+                                AIActionCard(action: action) { id in
+                                    confirmAndExecute(id)
+                                } onReject: { id in
+                                    // Phase 7: Record rejection pattern
+                                    if let a = conversation.pendingActions.first(where: { $0.id == id }) {
                                         AIMemoryStore.shared.recordApproval(actionType: a.type.rawValue, approved: false)
-                                        conversation.rejectAction(a.id)
                                     }
+                                    conversation.rejectAction(id)
                                 }
-                            )
-                        } else if let action = group.actions.first {
-                            AIActionCard(action: action) { id in
-                                confirmAndExecute(id)
-                            } onReject: { id in
-                                // Phase 7: Record rejection pattern
-                                if let a = conversation.pendingActions.first(where: { $0.id == id }) {
-                                    AIMemoryStore.shared.recordApproval(actionType: a.type.rawValue, approved: false)
-                                }
-                                conversation.rejectAction(id)
                             }
                         }
                     }
@@ -469,18 +562,39 @@ struct AIChatView: View {
 
     private var streamingBubble: some View {
         HStack {
-            VStack(alignment: .leading) {
-                HStack(spacing: 6) {
-                    TypingDotsView()
-                    Text(streamingText.isEmpty ? "Thinking…" : streamingText)
-                        .font(DS.Typography.body)
-                        .foregroundStyle(DS.Colors.text)
+            VStack(alignment: .leading, spacing: 0) {
+                if streamingText.isEmpty {
+                    // Skeleton shimmer with dynamic phase label
+                    AIThinkingShimmer(label: streamingPhase.label, icon: streamingPhase.icon)
+                } else {
+                    // Show streaming text with rich formatting
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .top, spacing: 6) {
+                            TypingDotsView()
+                                .padding(.top, 4)
+                            AIMarkdownText(text: streamingText, role: .assistant)
+                        }
+
+                        // Phase indicator below streaming text
+                        if streamingPhase != .composing {
+                            HStack(spacing: 4) {
+                                Image(systemName: streamingPhase.icon)
+                                    .font(.system(size: 10))
+                                Text(streamingPhase.label)
+                                    .font(.system(size: 11))
+                            }
+                            .foregroundStyle(DS.Colors.accent.opacity(0.7))
+                            .padding(.leading, 4)
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        }
+                    }
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(colorScheme == .dark ? DS.Colors.surfaceElevated : DS.Colors.surface)
+                    )
+                    .animation(.easeInOut(duration: 0.25), value: streamingPhase.label)
                 }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(colorScheme == .dark ? DS.Colors.surfaceElevated : DS.Colors.surface)
-                )
             }
             Spacer(minLength: 60)
         }
@@ -561,19 +675,7 @@ struct AIChatView: View {
             Color.black.opacity(0.35)
                 .ignoresSafeArea()
 
-            VStack(spacing: 14) {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .scaleEffect(1.2)
-                    .tint(.white)
-
-                Text("Loading AI Model…")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.white)
-            }
-            .padding(.horizontal, 32)
-            .padding(.vertical, 24)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+            AIModelLoadingView()
         }
         .transition(.opacity.animation(.easeInOut(duration: 0.25)))
     }
@@ -582,9 +684,12 @@ struct AIChatView: View {
 
     private var aiNavigationTitle: some View {
         VStack(spacing: 2) {
-            Text("Centmond AI")
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(DS.Colors.text)
+            HStack(spacing: 6) {
+                Text("Centmond AI")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(DS.Colors.text)
+                DS.BetaBadge()
+            }
 
             HStack(spacing: 8) {
                 HStack(spacing: 5) {
@@ -621,7 +726,7 @@ struct AIChatView: View {
     private var navStatusText: String {
         switch aiManager.status {
         case .ready: return "Ready"
-        case .generating: return "Thinking..."
+        case .generating: return isStreaming ? streamingPhase.label : "Generating…"
         case .loading: return "Loading model..."
         case .downloading(let p, _): return "Downloading \(Int(p * 100))%"
         case .error: return "Error"
@@ -766,8 +871,363 @@ struct AIChatView: View {
     // MARK: - Actions
 
     private func loadModelIfNeeded() {
-        guard aiManager.status != .ready else { return }
-        aiManager.loadModel()
+        switch aiManager.status {
+        case .ready, .generating, .loading, .downloading:
+            return  // Already loaded, loading, or downloading — nothing to do
+        case .notLoaded, .error:
+            guard aiManager.isModelDownloaded else { return }
+            aiManager.loadModel()
+        }
+    }
+
+    // MARK: - Chat Persistence
+
+    /// On first chat open per app launch, start a fresh empty session.
+    /// Subsequent opens within the same launch resume the current session so
+    /// closing/reopening the sheet doesn't wipe an in-progress conversation.
+    /// Previous sessions remain available via the history button.
+    private static var hasStartedChatThisLaunch = false
+
+    private func loadPersistedSessionIfNeeded() {
+        guard currentSession == nil else { return }
+        if !Self.hasStartedChatThisLaunch {
+            // First open since app launch → new blank chat.
+            let session = ChatPersistenceManager.shared.createSession(context: modelContext)
+            currentSession = session
+            persistedMessageIDs = []
+            Self.hasStartedChatThisLaunch = true
+        } else {
+            // Subsequent opens → resume the most recent session.
+            let session = ChatPersistenceManager.shared.currentSession(context: modelContext)
+            currentSession = session
+            ChatPersistenceManager.shared.populate(conversation, from: session)
+            persistedMessageIDs = Set(conversation.messages.map { $0.id })
+        }
+    }
+
+    /// Save any messages appended to the conversation that haven't been
+    /// persisted yet. Fired by .onChange on messages.count, so it runs after
+    /// both user and assistant message additions.
+    private func persistNewMessages() {
+        guard let session = currentSession else { return }
+        for msg in conversation.messages where !persistedMessageIDs.contains(msg.id) {
+            switch msg.role {
+            case .user:
+                ChatPersistenceManager.shared.saveUserMessage(
+                    msg.content, session: session, context: modelContext
+                )
+            case .assistant:
+                ChatPersistenceManager.shared.saveAssistantMessage(
+                    msg.content, actions: msg.actions,
+                    session: session, context: modelContext
+                )
+            case .system:
+                break
+            }
+            persistedMessageIDs.insert(msg.id)
+        }
+    }
+
+    /// Create a new empty ChatSession and reset the in-memory conversation.
+    private func startNewChat() {
+        let session = ChatPersistenceManager.shared.createSession(context: modelContext)
+        currentSession = session
+        conversation.messages.removeAll()
+        conversation.pendingActions.removeAll()
+        persistedMessageIDs = []
+        input = ""
+        isInputFocused = false
+    }
+
+    /// Switch the current view to an existing ChatSession, replaying its messages.
+    private func switchToSession(_ session: ChatSession) {
+        currentSession = session
+        ChatPersistenceManager.shared.populate(conversation, from: session)
+        persistedMessageIDs = Set(conversation.messages.map { $0.id })
+        showChatHistory = false
+    }
+
+    // MARK: - Chat History Sheet
+
+    private var chatHistorySheet: some View {
+        NavigationStack {
+            let sessions = ChatPersistenceManager.shared.fetchSessions(context: modelContext)
+            let _ = historyRefreshToken  // subscribe to refresh
+            List {
+                if sessions.isEmpty {
+                    Text("No chats yet")
+                        .foregroundStyle(DS.Colors.subtext)
+                        .font(.system(size: 14))
+                } else {
+                    ForEach(sessions, id: \.id) { session in
+                        Button {
+                            switchToSession(session)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(session.title)
+                                        .font(.system(size: 15, weight: session.id == currentSession?.id ? .semibold : .regular))
+                                        .foregroundStyle(DS.Colors.text)
+                                        .lineLimit(1)
+                                    Spacer()
+                                    if session.id == currentSession?.id {
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 12, weight: .bold))
+                                            .foregroundStyle(DS.Colors.accent)
+                                    }
+                                }
+                                Text(session.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(DS.Colors.subtext)
+                            }
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) {
+                                deleteHistorySession(session)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                            Button {
+                                beginRename(session)
+                            } label: {
+                                Label("Rename", systemImage: "pencil")
+                            }
+                            .tint(DS.Colors.accent)
+                        }
+                        .contextMenu {
+                            Button {
+                                beginRename(session)
+                            } label: {
+                                Label("Rename", systemImage: "pencil")
+                            }
+                            Button(role: .destructive) {
+                                deleteHistorySession(session)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Chat History")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showChatHistory = false
+                        startNewChat()
+                    } label: {
+                        Label("New", systemImage: "square.and.pencil")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { showChatHistory = false }
+                        .fontWeight(.semibold)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .alert("Rename Chat", isPresented: Binding(
+            get: { sessionToRename != nil },
+            set: { if !$0 { sessionToRename = nil } }
+        )) {
+            TextField("Chat title", text: $renameText)
+            Button("Cancel", role: .cancel) { sessionToRename = nil }
+            Button("Save") {
+                if let session = sessionToRename {
+                    ChatPersistenceManager.shared.renameSession(
+                        session, to: renameText, context: modelContext
+                    )
+                    historyRefreshToken = UUID()
+                }
+                sessionToRename = nil
+            }
+        }
+    }
+
+    private func beginRename(_ session: ChatSession) {
+        renameText = session.title
+        sessionToRename = session
+    }
+
+    private func deleteHistorySession(_ session: ChatSession) {
+        let wasCurrent = session.id == currentSession?.id
+        ChatPersistenceManager.shared.deleteSession(session, context: modelContext)
+        if wasCurrent {
+            currentSession = nil
+            conversation.messages.removeAll()
+            conversation.pendingActions.removeAll()
+            persistedMessageIDs = []
+        }
+        historyRefreshToken = UUID()
+    }
+
+    // MARK: - Pending Action Patching
+
+    /// Try to interpret `text` as an inline edit to the most recent pending
+    /// action (not-yet-confirmed). Returns true if it patched something.
+    /// Covers: date, amount, category, note, transaction type.
+    private func tryPatchPendingAction(from text: String) -> Bool {
+        guard let pending = conversation.pendingActions.last(where: { $0.status == .pending }),
+              pending.type == .addTransaction || pending.type == .editTransaction else {
+            return false
+        }
+        let lower = text.lowercased()
+
+        var patched = pending
+        var changed: [String] = []
+
+        // ── Date ──
+        if let newDate = extractDate(lower: lower, original: text) {
+            patched.params.date = newDate
+            changed.append("date to \(newDate)")
+        }
+
+        // ── Amount ──
+        if let newAmountCents = extractAmountCents(text) {
+            patched.params.amount = newAmountCents
+            let dollars = Double(newAmountCents) / 100
+            changed.append(String(format: "amount to %.2f", dollars))
+        }
+
+        // ── Category ──
+        if let cat = extractCategory(lower) {
+            patched.params.category = cat.storageKey
+            changed.append("category to \(cat.title)")
+        }
+
+        // ── Note ──
+        if let newNote = extractNote(text) {
+            patched.params.note = newNote
+            changed.append("note to \"\(newNote)\"")
+        }
+
+        // ── Type ──
+        if lower.contains("make it income") || lower.contains("change to income") || lower.contains("set to income") {
+            patched.params.transactionType = "income"
+            changed.append("type to income")
+        } else if lower.contains("make it expense") || lower.contains("change to expense") || lower.contains("set to expense") {
+            patched.params.transactionType = "expense"
+            changed.append("type to expense")
+        }
+
+        guard !changed.isEmpty else { return false }
+
+        // Apply the patch to the conversation — update both pendingActions
+        // and the message.actions blob so the card re-renders.
+        if let pIdx = conversation.pendingActions.firstIndex(where: { $0.id == pending.id }) {
+            conversation.pendingActions[pIdx] = patched
+        }
+        for mIdx in conversation.messages.indices {
+            if var actions = conversation.messages[mIdx].actions,
+               let aIdx = actions.firstIndex(where: { $0.id == pending.id }) {
+                actions[aIdx] = patched
+                conversation.messages[mIdx].actions = actions
+            }
+        }
+
+        conversation.addAssistantMessage(
+            "Updated " + changed.joined(separator: ", ") + ". Tap Confirm to save.",
+            actions: nil
+        )
+        return true
+    }
+
+    private func extractDate(lower: String, original: String) -> String? {
+        if lower.contains("yesterday") { return "yesterday" }
+        if lower.contains("today") { return "today" }
+        if lower.contains("tomorrow") { return "tomorrow" }
+        // "N days ago"
+        if let m = lower.range(of: #"(\d+)\s+days?\s+ago"#, options: .regularExpression) {
+            let match = String(lower[m])
+            let digits = match.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+            if let n = Int(digits) {
+                let date = Calendar.current.date(byAdding: .day, value: -n, to: Date()) ?? Date()
+                let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
+                return df.string(from: date)
+            }
+        }
+        // ISO date
+        if let m = lower.range(of: #"\d{4}-\d{2}-\d{2}"#, options: .regularExpression) {
+            return String(lower[m])
+        }
+        // Natural-language fallback via NSDataDetector
+        // Handles "02. April", "April 2", "2 Apr", "Apr 2nd", "02/04", etc.
+        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue) {
+            let range = NSRange(original.startIndex..., in: original)
+            if let match = detector.matches(in: original, options: [], range: range).first,
+               let parsed = match.date {
+                // Default year: current, since the user rarely specifies it.
+                var comps = Calendar.current.dateComponents([.year, .month, .day], from: parsed)
+                if comps.year == nil || comps.year == 0 {
+                    comps.year = Calendar.current.component(.year, from: Date())
+                }
+                if let final = Calendar.current.date(from: comps) {
+                    let df = DateFormatter()
+                    df.dateFormat = "yyyy-MM-dd"
+                    return df.string(from: final)
+                }
+            }
+        }
+        return nil
+    }
+
+    private func extractAmountCents(_ text: String) -> Int? {
+        let lower = text.lowercased()
+        let hasCurrency = lower.contains("$") || lower.contains("€") || lower.contains("£")
+        let hasAmountWord = lower.contains("amount")
+        let editVerbs = ["change", "make it", "update", "set "]
+        let hasEditVerb = editVerbs.contains(where: { lower.contains($0) })
+        // Require either an explicit currency OR (edit-verb + "amount")
+        guard hasCurrency || (hasEditVerb && hasAmountWord) else { return nil }
+        let pattern = #"(\d+(?:[.,]\d{1,2})?)"#
+        guard let m = text.range(of: pattern, options: .regularExpression) else { return nil }
+        let raw = String(text[m]).replacingOccurrences(of: ",", with: ".")
+        guard let val = Double(raw), val > 0 else { return nil }
+        return Int((val * 100).rounded())
+    }
+
+    private func extractCategory(_ lower: String) -> Category? {
+        // Require an edit verb + "category" keyword OR plain mention
+        let hasVerb = ["change", "make", "update", "set", "to "].contains(where: { lower.contains($0) })
+        guard hasVerb else { return nil }
+        // Phase 5: try custom names first (longest first so multi-word wins)
+        let customs = CategoryRegistry.shared.customNames
+            .sorted { $0.count > $1.count }
+        for name in customs {
+            if lower.contains(name.lowercased()) { return .custom(name) }
+        }
+        for cat in Category.allCases {
+            if case .other = cat { continue }
+            if lower.contains(cat.title.lowercased()) || lower.contains(cat.storageKey.lowercased()) {
+                return cat
+            }
+        }
+        return nil
+    }
+
+    private func extractNote(_ text: String) -> String? {
+        let lower = text.lowercased()
+        // Patterns: "note to X", "call it X", "label X", "note: X"
+        let patterns = [
+            #"note\s+to\s+(.+)$"#,
+            #"note\s*[:=]\s*(.+)$"#,
+            #"call\s+it\s+(.+)$"#,
+            #"label\s+(?:it\s+)?(.+)$"#,
+            #"change\s+(?:the\s+)?note\s+to\s+(.+)$"#
+        ]
+        for p in patterns {
+            if let m = lower.range(of: p, options: .regularExpression) {
+                let matched = String(text[m])
+                if let capture = matched.range(of: #"(?<=to |: |= |it |label )[^\n]+$"#, options: .regularExpression) {
+                    let note = String(matched[capture])
+                        .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'")))
+                    if !note.isEmpty { return note }
+                }
+            }
+        }
+        return nil
     }
 
     private func sendMessage(_ text: String) {
@@ -779,6 +1239,12 @@ struct AIChatView: View {
 
         // Dismiss keyboard immediately
         isInputFocused = false
+
+        // Short-circuit: if the user is patching a pending (not-yet-confirmed)
+        // action inline (e.g. "change the date to yesterday"), apply the patch
+        // directly instead of hallucinating an edit_transaction on a row that
+        // doesn't exist in the store yet.
+        if tryPatchPendingAction(from: trimmed) { return }
 
         // Learn from user message
         AIUserPreferences.shared.learnFromMessage(trimmed)
@@ -854,13 +1320,16 @@ struct AIChatView: View {
 
         isStreaming = true
         streamingText = ""
+        streamingPhase = .thinking
 
         Task { @MainActor in
             defer {
                 isStreaming = false
                 streamingText = ""
+                streamingPhase = .thinking
             }
             // Build context based on intent hint — focused context saves tokens
+            streamingPhase = .analyzing
             let context: String
             switch classification.contextHint {
             case .budgetOnly:
@@ -873,33 +1342,45 @@ struct AIChatView: View {
                 context = await AIContextBuilder.buildSubscriptionsOnly(store: store)
             case .accountsOnly:
                 context = await AIContextBuilder.build(store: store)
-            case .minimal, .none:
+            case .minimal:
+                context = await AIContextBuilder.buildMinimal(store: store)
+            case .none:
                 context = ""
             case .full:
                 context = await AIContextBuilder.build(store: store)
             }
-            // Phase 9: Mode prompt is now injected inside AISystemPrompt.build()
-            var systemPrompt = AISystemPrompt.build(context: context.isEmpty ? nil : context)
+            // Use compact prompt for follow-up messages (saves ~2000 tokens for history).
+            // Full prompt only for first 2 messages when conversation history is short.
+            let messageCount = conversation.messages.count
+            var systemPrompt: String
+            if messageCount <= 2 {
+                systemPrompt = AISystemPrompt.build(context: context.isEmpty ? nil : context)
+            } else {
+                systemPrompt = AISystemPrompt.buildCompact(context: context.isEmpty ? nil : context)
+            }
 
-            // Inject merchant memory context
-            let merchantContext = AIMerchantMemory.shared.contextSummary()
+            // Inject merchant memory context (only for full prompt — compact already has memory)
+            let merchantContext = messageCount <= 2 ? AIMerchantMemory.shared.contextSummary() : ""
             if !merchantContext.isEmpty {
                 systemPrompt += "\n\n" + merchantContext
             }
 
-            // Inject safe-to-spend data for richer context
-            if classification.contextHint == .full || classification.contextHint == .budgetOnly {
-                let sts = AISafeToSpend.shared.calculate(store: store)
-                systemPrompt += "\n\nSAFE-TO-SPEND\n=============\n\(sts.summary())"
-            }
+            // Extra context injections — only for first messages (saves tokens for follow-ups)
+            if messageCount <= 2 {
+                // Inject safe-to-spend data for richer context
+                if classification.contextHint == .full || classification.contextHint == .budgetOnly {
+                    let sts = AISafeToSpend.shared.calculate(store: store)
+                    systemPrompt += "\n\nSAFE-TO-SPEND\n=============\n\(sts.summary())"
+                }
 
-            // Inject recurring detection summary
-            let recurringContext = AIRecurringDetector.shared.summary(
-                transactions: store.transactions,
-                existingRecurring: store.recurringTransactions
-            )
-            if !recurringContext.isEmpty {
-                systemPrompt += "\n\n" + recurringContext
+                // Inject recurring detection summary
+                let recurringContext = AIRecurringDetector.shared.summary(
+                    transactions: store.transactions,
+                    existingRecurring: store.recurringTransactions
+                )
+                if !recurringContext.isEmpty {
+                    systemPrompt += "\n\n" + recurringContext
+                }
             }
 
             // Inject clarification hint if needed (guides LLM to ask the right question)
@@ -908,9 +1389,15 @@ struct AIChatView: View {
                 systemPrompt += "\n\nCLARIFICATION HINT: The user's message may be ambiguous. Missing: \(hint). Ask a short clarifying question if needed."
             }
 
-            // Build multi-turn history — keep it short to fit context window.
+            // Build multi-turn history — compact prompt leaves more room for history.
             // Strip actions from assistant messages to save tokens.
-            let historyCount = classification.contextHint == .full ? 10 : 6
+            let historyCount: Int
+            if messageCount <= 2 {
+                historyCount = classification.contextHint == .full ? 6 : 4
+            } else {
+                // Compact prompt saves ~2000 tokens — use them for more history
+                historyCount = 12
+            }
             let history = conversation.messages.suffix(historyCount).map { msg -> AIMessage in
                 if msg.role == .assistant {
                     // Send only the text part (before ---ACTIONS---) to save tokens
@@ -927,13 +1414,28 @@ struct AIChatView: View {
             }
 
             var fullResponse = ""
+            var hasDetectedActions = false
+            var firstTokenReceived = false
+
+            streamingPhase = .thinking
 
             for await token in aiManager.stream(messages: history, systemPrompt: systemPrompt) {
                 fullResponse += token
+
+                // Transition to composing on first token
+                if !firstTokenReceived {
+                    firstTokenReceived = true
+                    streamingPhase = .composing
+                }
+
                 // Show text portion only (before ---ACTIONS---)
                 let display: String
                 if let range = fullResponse.range(of: "---ACTIONS---") {
                     display = String(fullResponse[fullResponse.startIndex..<range.lowerBound])
+                    if !hasDetectedActions {
+                        hasDetectedActions = true
+                        streamingPhase = .buildingActions
+                    }
                 } else {
                     display = fullResponse
                 }
@@ -941,11 +1443,48 @@ struct AIChatView: View {
                 streamingText = Self.cleanModelResponse(display, userMessage: trimmed)
             }
 
+            // Reviewing phase — parsing and validating
+            streamingPhase = .reviewing
+
             // Strip leaked Gemma tokens from final response
             fullResponse = Self.cleanModelResponse(fullResponse, userMessage: trimmed)
 
+            // Auto-retry once if the response was fully scrubbed away
+            // (Gemma occasionally regurgitates the system prompt and the
+            // leak-marker scrub leaves nothing). A silent second attempt
+            // usually succeeds because sampler entropy is fresh.
             if fullResponse.isEmpty {
-                fullResponse = "Sorry, something went wrong. Please try again."
+                streamingPhase = .thinking
+                streamingText = ""
+                var retryResponse = ""
+                var retryFirstToken = false
+                for await token in aiManager.stream(messages: history, systemPrompt: systemPrompt) {
+                    retryResponse += token
+                    if !retryFirstToken {
+                        retryFirstToken = true
+                        streamingPhase = .composing
+                    }
+                    let display: String
+                    if let range = retryResponse.range(of: "---ACTIONS---") {
+                        display = String(retryResponse[retryResponse.startIndex..<range.lowerBound])
+                    } else {
+                        display = retryResponse
+                    }
+                    streamingText = Self.cleanModelResponse(display, userMessage: trimmed)
+                }
+                fullResponse = Self.cleanModelResponse(retryResponse, userMessage: trimmed)
+                streamingPhase = .reviewing
+            }
+
+            // If still empty after retry, show a helpful nudge instead of
+            // a generic "something went wrong" message.
+            if fullResponse.isEmpty {
+                conversation.addAssistantMessage(
+                    "I couldn't put together an answer for that. Try rephrasing — for example, ask about a specific category or month (\"how much did I spend on dining last month?\").",
+                    actions: nil
+                )
+                AIAuditLog.shared.recordError(entryId: auditId, error: "empty_response_after_retry")
+                return
             }
 
             let parsed = AIActionParser.parse(fullResponse)
@@ -999,6 +1538,8 @@ struct AIChatView: View {
                 }
             }
 
+            streamingPhase = .almostDone
+
             if !finalActions.isEmpty {
                 let analysisTypes: Set<AIAction.ActionType> = [.analyze, .compare, .forecast, .advice]
 
@@ -1014,11 +1555,35 @@ struct AIChatView: View {
 
                 if !mutationActions.isEmpty {
                     // Phase 2: Trust & Approval — evaluate through central policy engine
-                    let classified = trustManager.classify(
+                    var classified = trustManager.classify(
                         mutationActions,
                         classification: classification,
                         mode: modeManager.currentMode
                     )
+
+                    // HARD RULE belt-and-suspenders: every mutation must show a
+                    // Confirm/Reject card, regardless of mode/preferences. If
+                    // anything ever leaks into `auto`, downgrade it to confirm.
+                    if !classified.auto.isEmpty {
+                        let reroute = classified.auto.map { (action, decision) -> (AIAction, TrustDecision) in
+                            let forced = TrustDecision(
+                                id: decision.id,
+                                actionType: decision.actionType,
+                                level: .confirm,
+                                reason: decision.reason + " · downgraded by Confirm-Every-Action policy",
+                                riskScore: decision.riskScore,
+                                confidenceUsed: decision.confidenceUsed,
+                                preferenceInfluenced: decision.preferenceInfluenced,
+                                blockMessage: decision.blockMessage
+                            )
+                            return (action, forced)
+                        }
+                        classified = TrustClassifiedActions(
+                            auto: [],
+                            confirm: classified.confirm + reroute,
+                            blocked: classified.blocked
+                        )
+                    }
 
                     // Phase 3: Action grouping — link all actions from this request
                     let groupId = mutationActions.count > 1 ? UUID() : nil
@@ -1078,7 +1643,8 @@ struct AIChatView: View {
                         decisionsByActionId: decisionsByActionId,
                         classification: classification,
                         groupId: groupId,
-                        groupLabel: groupLabel
+                        groupLabel: groupLabel,
+                        userMessage: trimmed
                     )
 
                     // Auto-execute trusted actions
@@ -1129,6 +1695,13 @@ struct AIChatView: View {
                                         amount: action.params.amount ?? 0
                                     )
                                 }
+
+                                // Few-shot learning: record successful auto-executed action
+                                AIFewShotLearning.shared.recordSuccess(
+                                    userMessage: trimmed,
+                                    action: action,
+                                    wasAutoExecuted: true
+                                )
                             }
                         }
                         store = copy
@@ -1139,9 +1712,45 @@ struct AIChatView: View {
                     conversation.addAssistantMessage(parsed.text, actions: finalActions)
                 }
             } else {
-                conversation.addAssistantMessage(parsed.text, actions: nil)
+                // Safety net: the model may announce a mutation in text
+                // ("I'll add…", "I will delete…") without emitting a parseable
+                // action block. Per the hard rule "every mutation needs a
+                // confirm card", we must NOT let that text stand — there is
+                // nothing to confirm and nothing actually happened.
+                if Self.textClaimsMutation(parsed.text) {
+                    conversation.addAssistantMessage(
+                        "I couldn't turn that into a confirmable action. Could you rephrase it — for example: \"add a 12€ dining expense yesterday\"?",
+                        actions: nil
+                    )
+                } else {
+                    conversation.addAssistantMessage(parsed.text, actions: nil)
+                }
             }
         }
+    }
+
+    /// Detect text where the model is announcing it will mutate state
+    /// without having emitted an action. We never want such text to land
+    /// in the chat without a Confirm/Reject card.
+    private static func textClaimsMutation(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        let phrases = [
+            "i'll add", "i will add", "i added", "i've added",
+            "i'll delete", "i will delete", "i deleted",
+            "i'll remove", "i will remove", "i removed",
+            "i'll update", "i will update", "i updated",
+            "i'll edit", "i will edit", "i edited",
+            "i'll set", "i will set", "i set your",
+            "i'll create", "i will create", "i created",
+            "i'll cancel", "i will cancel", "i cancelled", "i canceled",
+            "i'll transfer", "i will transfer", "i transferred",
+            "i'll split", "i will split", "i split",
+            "i'll log", "i will log", "i logged",
+            "i'll record", "i will record", "i recorded",
+            "i'll save", "i will save", "i saved",
+            "expenses:", "two expenses", "both dated", "both for"
+        ]
+        return phrases.contains(where: { lower.contains($0) })
     }
 
     /// Confirm + execute in one step to avoid race conditions between
@@ -1196,6 +1805,18 @@ struct AIChatView: View {
                         amount: action.params.amount ?? 0
                     )
                 }
+
+                // Few-shot learning: record confirmed+executed action
+                if let userMsg = pendingTrustContext?.userMessage {
+                    AIFewShotLearning.shared.recordSuccess(
+                        userMessage: userMsg,
+                        action: action,
+                        wasAutoExecuted: false
+                    )
+                }
+
+                // Satisfaction signal: user confirmed = positive
+                AIPromptVersionManager.shared.recordSatisfaction()
             } else {
                 conversation.addAssistantMessage("❌ \(result.summary)", actions: nil)
             }
@@ -1227,6 +1848,19 @@ struct AIChatView: View {
                     isAutoExecuted: false
                 )
                 summaries.append("✅ \(result.summary)")
+
+                // Few-shot learning: batch-confirmed actions
+                if let userMsg = ctx?.userMessage {
+                    AIFewShotLearning.shared.recordSuccess(
+                        userMessage: userMsg,
+                        action: result.action,
+                        wasAutoExecuted: false
+                    )
+                }
+            }
+            // Satisfaction signal: user confirmed all = positive
+            if !summaries.isEmpty {
+                AIPromptVersionManager.shared.recordSatisfaction()
             }
             if !summaries.isEmpty {
                 conversation.addAssistantMessage(summaries.joined(separator: "\n"), actions: nil)
@@ -1242,6 +1876,7 @@ struct AIChatView: View {
         let classification: IntentClassification?
         let groupId: UUID?
         let groupLabel: String?
+        let userMessage: String  // original user input — used for few-shot learning
     }
 
     // MARK: - Action Grouping
@@ -1499,6 +2134,29 @@ struct AIChatView: View {
             .replacingOccurrences(of: "<start_of_turn>system", with: "")
             .replacingOccurrences(of: "<start_of_turn>", with: "")
 
+        // System-prompt leakage: when the model echoes the system prompt
+        // back to the user, cut everything from the first known leak marker.
+        // These are phrases that ONLY appear in the system prompt — they
+        // never legitimately occur in a real assistant reply.
+        let leakMarkers = [
+            "You are Centmond AI",
+            "You are Centmond",
+            "RESPONSE FORMAT",
+            "HISTORICAL SUMMARY",
+            "ACTIONS BLOCK",
+            "JSON actions block",
+            "---ACTIONS---",      // raw separator if it leaks before any text
+            "FULL financial history",
+            "bilingual (English + Farsi)",
+            "privacy-first: you run entirely on-device"
+        ]
+        for marker in leakMarkers {
+            if let range = text.range(of: marker) {
+                text = String(text[text.startIndex..<range.lowerBound])
+                break
+            }
+        }
+
         // Remove echoed user question (model sometimes repeats it at the top)
         // Check if response starts with the user's message (case-insensitive)
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1585,11 +2243,22 @@ struct AIChatView: View {
                 return "I'll add \(amt) to \"\(p.goalName ?? "goal")\"."
             case .updateGoal:
                 return "I'll update the goal \"\(p.goalName ?? "Goal")\"."
+            case .pauseGoal:
+                let verb = (p.goalPause ?? true) ? "pause" : "resume"
+                return "I'll \(verb) the goal \"\(p.goalName ?? "Goal")\"."
+            case .archiveGoal:
+                let verb = (p.goalArchive ?? true) ? "archive" : "unarchive"
+                return "I'll \(verb) the goal \"\(p.goalName ?? "Goal")\"."
+            case .withdrawFromGoal:
+                let amt = fmtCentsStatic(p.contributionAmount)
+                return "I'll withdraw \(amt) from \"\(p.goalName ?? "goal")\"."
             case .addSubscription:
                 let amt = fmtCentsStatic(p.subscriptionAmount)
                 return "I'll add subscription \"\(p.subscriptionName ?? "")\" at \(amt)."
             case .cancelSubscription:
                 return "I'll cancel the subscription \"\(p.subscriptionName ?? "")\"."
+            case .pauseSubscription:
+                return "I'll pause the subscription \"\(p.subscriptionName ?? "")\"."
             case .transfer:
                 let amt = fmtCentsStatic(p.amount)
                 return "I'll transfer \(amt) from \(p.fromAccount ?? "?") to \(p.toAccount ?? "?")."
@@ -1604,6 +2273,10 @@ struct AIChatView: View {
                 return "I'll update \(p.accountName ?? "account") balance."
             case .analyze, .compare, .forecast, .advice:
                 return nil  // Use model's text for analysis responses
+            default:
+                // Goal lifecycle ops (.pauseGoal/.archiveGoal/.withdrawFromGoal)
+                // and any future action types fall through to the model's text.
+                return nil
             }
         }
         return lines.isEmpty ? nil : lines.joined(separator: "\n")
@@ -1621,6 +2294,45 @@ struct AIChatView: View {
             if let summary = await actionHistory.undoLast(store: &copy) {
                 store = copy
                 conversation.addAssistantMessage(summary, actions: nil)
+
+                // Few-shot learning: record that the last action was bad
+                if let lastUserMsg = conversation.messages.last(where: { $0.role == .user })?.content {
+                    AIFewShotLearning.shared.recordUndo(userMessage: lastUserMsg)
+                }
+            }
+        }
+    }
+
+    // MARK: - Streaming Phase
+
+    /// Dynamic status phases shown while the AI is working.
+    enum StreamingPhase {
+        case thinking           // Initial — model starts processing
+        case analyzing          // Building context / reading financial data
+        case composing          // First tokens arriving — writing response
+        case buildingActions    // Detected ---ACTIONS--- in output
+        case reviewing          // Parsing & validating actions
+        case almostDone         // Final cleanup
+
+        var label: String {
+            switch self {
+            case .thinking:        return "Thinking…"
+            case .analyzing:       return "Analyzing your finances…"
+            case .composing:       return "Writing response…"
+            case .buildingActions: return "Building actions…"
+            case .reviewing:       return "Reviewing actions…"
+            case .almostDone:      return "Almost done…"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .thinking:        return "brain"
+            case .analyzing:       return "chart.bar.doc.horizontal"
+            case .composing:       return "text.cursor"
+            case .buildingActions: return "hammer"
+            case .reviewing:       return "checkmark.shield"
+            case .almostDone:      return "sparkles"
             }
         }
     }

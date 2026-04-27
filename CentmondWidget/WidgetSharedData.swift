@@ -50,6 +50,8 @@ struct WidgetSharedData: Codable {
     let weeklySpending: [Int]?          // cents per day
     // Top spending categories this month
     let topCategories: [WidgetCategory]?
+    // Top goals by priority (max 3) — Goals Rebuild Phase 9
+    let topGoals: [WidgetGoal]?
 
     // Meta
     let currencySymbol: String
@@ -85,6 +87,7 @@ struct WidgetSharedData: Codable {
         netWorth: 0, accountCount: 0, totalAssets: 0, totalLiabilities: 0,
         riskLevel: "safe", incomeThisMonth: 0,
         weeklySpending: nil, topCategories: nil,
+        topGoals: nil,
         currencySymbol: "€", lastUpdated: Date.distantPast
     )
 
@@ -117,8 +120,34 @@ struct WidgetSharedData: Codable {
             WidgetCategory(name: "Shopping", icon: "bag", amount: 21400, colorHex: "FF5722"),
             WidgetCategory(name: "Health", icon: "cross.case", amount: 17750, colorHex: "E74C3C"),
         ],
+        topGoals: [
+            WidgetGoal(name: "Emergency fund", icon: "shield.fill", currentAmount: 145000,
+                       targetAmount: 300000, colorHex: "2ECC71", daysRemaining: 92),
+            WidgetGoal(name: "Vacation", icon: "airplane", currentAmount: 42000,
+                       targetAmount: 120000, colorHex: "338CFF", daysRemaining: 45),
+            WidgetGoal(name: "New laptop", icon: "laptopcomputer", currentAmount: 78000,
+                       targetAmount: 90000, colorHex: "8B5CF6", daysRemaining: nil),
+        ],
         currencySymbol: "€", lastUpdated: Date()
     )
+}
+
+struct WidgetGoal: Codable, Identifiable {
+    var id: String { name }
+    let name: String
+    let icon: String              // SF Symbol name
+    let currentAmount: Int        // cents
+    let targetAmount: Int         // cents
+    let colorHex: String          // hex color e.g. "338CFF"
+    let daysRemaining: Int?       // nil = no deadline; negative = overdue
+
+    var progress: Double {
+        guard targetAmount > 0 else { return 0 }
+        return min(1.0, Double(currentAmount) / Double(targetAmount))
+    }
+
+    var progressPercent: Int { Int(progress * 100) }
+    var isCompleted: Bool { currentAmount >= targetAmount }
 }
 
 struct WidgetCategory: Codable, Identifiable {

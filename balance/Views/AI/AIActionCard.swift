@@ -236,18 +236,28 @@ struct AIActionCard: View {
         case .createGoal: return "target"
         case .addContribution: return "arrow.up.circle.fill"
         case .updateGoal: return "pencil"
+        case .pauseGoal: return "pause.circle.fill"
+        case .archiveGoal: return "archivebox.fill"
+        case .withdrawFromGoal: return "arrow.down.circle.fill"
         case .addSubscription: return "repeat.circle.fill"
         case .cancelSubscription: return "xmark.circle.fill"
+        case .pauseSubscription: return "pause.circle.fill"
         case .updateBalance: return "banknote.fill"
         case .analyze, .compare, .forecast, .advice: return "chart.bar.xaxis"
+        default:
+            // Account-rebuild types (.addAccount/.archiveAccount/.reconcileBalance):
+            // generic banknote until the Account Rebuild lands its UI commit.
+            return "banknote.fill"
         }
     }
 
     private var accentColor: Color {
         switch action.type {
-        case .deleteTransaction, .cancelSubscription, .cancelRecurring: return DS.Colors.danger
+        case .deleteTransaction, .cancelSubscription, .cancelRecurring,
+             .withdrawFromGoal: return DS.Colors.danger
         case .addTransaction, .addContribution, .addSubscription, .addRecurring: return DS.Colors.positive
-        case .setBudget, .adjustBudget, .setCategoryBudget: return DS.Colors.warning
+        case .setBudget, .adjustBudget, .setCategoryBudget,
+             .pauseGoal, .archiveGoal: return DS.Colors.warning
         case .createGoal, .updateGoal: return DS.Colors.accent
         case .transfer: return DS.Colors.accent
         default: return DS.Colors.accent
@@ -271,10 +281,20 @@ struct AIActionCard: View {
         case .createGoal: return "Create Goal"
         case .addContribution: return "Add to Goal"
         case .updateGoal: return "Update Goal"
+        case .pauseGoal:
+            return (action.params.goalPause ?? true) ? "Pause Goal" : "Resume Goal"
+        case .archiveGoal:
+            return (action.params.goalArchive ?? true) ? "Archive Goal" : "Unarchive Goal"
+        case .withdrawFromGoal: return "Withdraw from Goal"
         case .addSubscription: return "Add Subscription"
         case .cancelSubscription: return "Cancel Subscription"
+        case .pauseSubscription: return "Pause Subscription"
         case .updateBalance: return "Update Balance"
         case .analyze, .compare, .forecast, .advice: return "Analysis"
+        default:
+            // Account-rebuild types — readable fallback until the Account
+            // Rebuild lands its UI commit and supplies proper titles.
+            return action.type.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
         }
     }
 
@@ -324,6 +344,7 @@ struct AIActionCard: View {
                         Text(entry.label)
                             .font(.caption.weight(.medium))
                             .foregroundStyle(DS.Colors.text)
+                            .lineLimit(1)
 
                         Spacer()
 

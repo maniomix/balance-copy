@@ -9,7 +9,12 @@ struct Store: Hashable, Codable {
     /// Outer key: YYYY-MM, inner key: Category.storageKey
     var categoryBudgetsByMonth: [String: [String: Int]] = [:]
     var transactions: [Transaction] = []
-    // Custom categories created by user
+    // Custom categories created by user.
+    // `customCategoriesWithIcons` is the source of truth (Phase 1+).
+    // `customCategoryNames` is a Phase 7 legacy field — kept in the schema
+    // for one more release so old persisted JSON / old backups still decode.
+    // It is migrated into `customCategoriesWithIcons` on load and then emptied;
+    // no code path writes to it anymore.
     var customCategoryNames: [String] = []
     var customCategoriesWithIcons: [CustomCategoryModel] = []
     // Track deleted transactions for sync (Array for better JSON compatibility)
@@ -30,6 +35,26 @@ struct Store: Hashable, Codable {
     // MARK: - Recurring Transactions
     var recurringTransactions: [RecurringTransaction] = []
 
+    // MARK: - AISubscriptions (Phase 3a)
+    var aiSubscriptions: [AISubscription] = []
+    var aiSubscriptionCharges: [AISubscriptionCharge] = []
+    var aiSubscriptionPriceChanges: [AISubscriptionPriceChange] = []
+    /// Merchant keys the user dismissed as "not a subscription" — SubscriptionDetector
+    /// skips these on re-runs so the review queue doesn't keep resurfacing them.
+    var aiDismissedSubscriptionKeys: [String] = []
+
+    // MARK: - Goal Contributions & Rules (Phase 4b)
+    var aiGoalContributions: [AIGoalContribution] = []
+    var goalAllocationRules: [GoalAllocationRule] = []
+
+    // MARK: - Net Worth Snapshots (Phase 4c)
+    var netWorthSnapshots: [NetWorthSnapshot] = []
+
+    // MARK: - Review Queue dismissals (Phase 6b)
+    /// Keys the user has dismissed ("review:<reason>:<id>"). `ReviewQueueService`
+    /// filters the queue against this set so dismissed items stay hidden.
+    var dismissedReviewKeys: [String] = []
+
     static func monthKey(_ date: Date) -> String {
         let cal = Calendar.current
         let y = cal.component(.year, from: date)
@@ -49,24 +74,25 @@ struct Store: Hashable, Codable {
 
     // MARK: - Savings
 
-    /// Total spent (expenses only) for a given month (cents).
+    /// Total spent (expenses only) for a given month (cents). Transfer legs
+    /// are excluded — moving money between own accounts is not spending.
     func spent(for month: Date) -> Int {
         let cal = Calendar.current
         return transactions
             .filter {
                 cal.isDate($0.date, equalTo: month, toGranularity: .month) &&
-                $0.type == .expense
+                $0.type == .expense && !$0.isTransfer
             }
             .reduce(0) { $0 + $1.amount }
     }
 
-    /// Total income for a given month (cents).
+    /// Total income for a given month (cents). Transfer legs are excluded.
     func income(for month: Date) -> Int {
         let cal = Calendar.current
         return transactions
             .filter {
                 cal.isDate($0.date, equalTo: month, toGranularity: .month) &&
-                $0.type == .income
+                $0.type == .income && !$0.isTransfer
             }
             .reduce(0) { $0 + $1.amount }
     }
@@ -265,10 +291,61 @@ struct Store: Hashable, Codable {
         return hasTx || hasBudget || hasCaps
     }
 
+    /// Source of truth for custom categories is `customCategoriesWithIcons`.
+    /// `customCategoryNames` is kept for back-compat (legacy persistence + backups)
+    /// and is migrated into the icon-bearing list on load — see
+    /// `migrateCustomCategoriesIfNeeded()`. Phase 7 will delete the old field.
     var allCategories: [Category] {
-        let namesFromIcons = customCategoriesWithIcons.map { $0.name }
-        let allCustomNames = Set(customCategoryNames + namesFromIcons)
-        return Category.allCases + allCustomNames.sorted().map { Category.custom($0) }
+        let sorted = customCategoriesWithIcons.sorted {
+            if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
+            return $0.name.lowercased() < $1.name.lowercased()
+        }
+        return Category.allCases + sorted.map { Category.custom($0.name) }
+    }
+
+    /// One-way migration: any name in the legacy `customCategoryNames` list that
+    /// doesn't yet have a `CustomCategoryModel` entry gets one with default
+    /// icon/color. Idempotent — safe to call repeatedly. Returns `true` if any
+    /// change was made (so callers can persist). Phase 7: also drains the
+    /// legacy list after promoting so subsequent saves don't carry it.
+    @discardableResult
+    mutating func migrateCustomCategoriesIfNeeded() -> Bool {
+        var changed = false
+        let existing = Set(customCategoriesWithIcons.map { $0.name.lowercased() })
+        var nextOrder = (customCategoriesWithIcons.map(\.sortOrder).max() ?? -1) + 1
+
+        for name in customCategoryNames {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !existing.contains(trimmed.lowercased()) else { continue }
+            customCategoriesWithIcons.append(
+                CustomCategoryModel(name: trimmed, sortOrder: nextOrder)
+            )
+            nextOrder += 1
+            changed = true
+        }
+
+        // Phase 7: once promoted, never write to the legacy field again.
+        if !customCategoryNames.isEmpty {
+            customCategoryNames.removeAll()
+            changed = true
+        }
+
+        // Backfill sortOrder for any records that all share 0
+        if customCategoriesWithIcons.count > 1 {
+            let allZero = customCategoriesWithIcons.allSatisfy { $0.sortOrder == 0 }
+            if allZero {
+                let alpha = customCategoriesWithIcons
+                    .sorted { $0.name.lowercased() < $1.name.lowercased() }
+                for (i, model) in alpha.enumerated() {
+                    if let idx = customCategoriesWithIcons.firstIndex(where: { $0.id == model.id }) {
+                        customCategoriesWithIcons[idx].sortOrder = i
+                    }
+                }
+                changed = true
+            }
+        }
+
+        return changed
     }
 
     /// Whether a custom category name already exists (case-insensitive check).
@@ -281,8 +358,7 @@ struct Store: Hashable, Codable {
         let systemNames = Category.allCases.map { $0.title.lowercased() }
         if systemNames.contains(trimmed) { return true }
 
-        // Check existing custom categories (both name lists)
-        if customCategoryNames.contains(where: { $0.lowercased() == trimmed }) { return true }
+        // Check existing custom categories (icon list is the source of truth)
         if customCategoriesWithIcons.contains(where: { $0.name.lowercased() == trimmed }) { return true }
 
         return false
@@ -293,8 +369,24 @@ struct Store: Hashable, Codable {
         guard !trimmed.isEmpty else { return }
         guard !customCategoryNameExists(trimmed) else { return }
 
-        customCategoryNames.append(trimmed)
-        customCategoryNames.sort { $0.lowercased() < $1.lowercased() }
+        // Single source of truth (Phase 7): write only to the icon-bearing list.
+        let nextOrder = (customCategoriesWithIcons.map(\.sortOrder).max() ?? -1) + 1
+        customCategoriesWithIcons.append(CustomCategoryModel(name: trimmed, sortOrder: nextOrder))
+    }
+
+    /// Add a fully-specified custom category (with icon/color).
+    /// Used by the editor sheet. Idempotent on duplicates.
+    mutating func addCustomCategory(_ model: CustomCategoryModel) {
+        let trimmed = model.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard !customCategoryNameExists(trimmed) else { return }
+
+        var copy = model
+        copy.name = trimmed
+        if copy.sortOrder == 0 {
+            copy.sortOrder = (customCategoriesWithIcons.map(\.sortOrder).max() ?? -1) + 1
+        }
+        customCategoriesWithIcons.append(copy)
     }
 
     /// Rename a custom category atomically.
@@ -310,16 +402,7 @@ struct Store: Hashable, Codable {
             return
         }
 
-        // 1. Update customCategoryNames
-        if let idx = customCategoryNames.firstIndex(of: oldName) {
-            customCategoryNames[idx] = trimmedNew
-        } else {
-            // Old name wasn't in customCategoryNames — add the new one
-            customCategoryNames.append(trimmedNew)
-        }
-        customCategoryNames.sort { $0.lowercased() < $1.lowercased() }
-
-        // 2. Update customCategoriesWithIcons (name is mutable on the model)
+        // 1. Update customCategoriesWithIcons (name is mutable on the model)
         if let idx = customCategoriesWithIcons.firstIndex(where: { $0.name == oldName }) {
             customCategoriesWithIcons[idx].name = trimmedNew
         }
@@ -351,10 +434,7 @@ struct Store: Hashable, Codable {
     }
 
     mutating func deleteCustomCategory(name: String) {
-        // 1. Remove from customCategoryNames
-        customCategoryNames.removeAll { $0 == name }
-
-        // 2. Remove from customCategoriesWithIcons
+        // 1. Remove from customCategoriesWithIcons (single source of truth)
         customCategoriesWithIcons.removeAll { $0.name == name }
 
         // 3. Update all transactions using this category to "Other"
@@ -377,6 +457,67 @@ struct Store: Hashable, Codable {
                 recurringTransactions[i].category = .other
             }
         }
+    }
+
+    /// Merge the `source` custom category into `target`. Reassigns all
+    /// transactions, recurring rules, and category budgets that point at
+    /// `source` to point at `target`, then removes `source` from the custom
+    /// list. If both have a budget for the same month, the values are summed
+    /// (the user's intent is "add this category's spend to that one").
+    ///
+    /// `target` may be a built-in category or another custom one — only
+    /// `source` is required to be a custom name. No-op if names match
+    /// (case-insensitive) or if `source` doesn't exist.
+    mutating func mergeCustomCategory(source sourceName: String, into target: Category) {
+        let trimmed = sourceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if case .custom(let tName) = target, tName.lowercased() == trimmed.lowercased() { return }
+
+        let sourceCat = Category.custom(trimmed)
+        let sourceKey = sourceCat.storageKey
+        let targetKey = target.storageKey
+
+        // 1. Reassign transactions
+        for i in transactions.indices {
+            if case .custom(let n) = transactions[i].category, n == trimmed {
+                transactions[i].category = target
+                transactions[i].lastModified = Date()
+            }
+        }
+
+        // 2. Reassign recurring
+        for i in recurringTransactions.indices {
+            if case .custom(let n) = recurringTransactions[i].category, n == trimmed {
+                recurringTransactions[i].category = target
+            }
+        }
+
+        // 3. Merge category budgets (sum on collision)
+        for monthKey in categoryBudgetsByMonth.keys {
+            guard let sourceValue = categoryBudgetsByMonth[monthKey]?[sourceKey] else { continue }
+            let existing = categoryBudgetsByMonth[monthKey]?[targetKey] ?? 0
+            categoryBudgetsByMonth[monthKey]?[targetKey] = existing + sourceValue
+            categoryBudgetsByMonth[monthKey]?.removeValue(forKey: sourceKey)
+        }
+
+        // 4. Remove source from custom list
+        customCategoriesWithIcons.removeAll { $0.name == trimmed }
+    }
+
+    /// How many entries in each domain reference this custom category. Used to
+    /// preview the impact of delete/merge before the user confirms.
+    func customCategoryUsage(name: String) -> (transactions: Int, recurring: Int, budgets: Int) {
+        let txCount = transactions.reduce(0) { partial, t in
+            if case .custom(let n) = t.category, n == name { return partial + 1 }
+            return partial
+        }
+        let recCount = recurringTransactions.reduce(0) { partial, r in
+            if case .custom(let n) = r.category, n == name { return partial + 1 }
+            return partial
+        }
+        let key = Category.custom(name).storageKey
+        let budgetMonths = categoryBudgetsByMonth.values.filter { ($0[key] ?? 0) > 0 }.count
+        return (txCount, recCount, budgetMonths)
     }
 
     /// Remove budget keys that reference categories which no longer exist.
@@ -434,7 +575,13 @@ struct Store: Hashable, Codable {
         do {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            return try decoder.decode(Store.self, from: data)
+            var loaded = try decoder.decode(Store.self, from: data)
+            // Phase 1: bring legacy string-only custom categories into the
+            // icon-bearing list so the rest of the app can render them properly.
+            if loaded.migrateCustomCategoriesIfNeeded() {
+                _ = loaded.save(userId: userId)
+            }
+            return loaded
         } catch {
             SecureLogger.error("Store load failed — data corrupted, backing up and returning empty store", error)
             // Preserve corrupt data under a backup key so it can be recovered

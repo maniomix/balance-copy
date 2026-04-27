@@ -56,8 +56,8 @@ struct Goal: Identifiable, Codable, Hashable {
     let id: UUID
     var name: String
     var type: GoalType
-    var targetAmount: Int          // cents
-    var currentAmount: Int         // cents
+    var targetAmount: Int          // cents — current target (user-editable)
+    var currentAmount: Int         // cents — denorm cache; truth is Σ contributions
     var currency: String
     var targetDate: Date?
     var linkedAccountId: UUID?
@@ -68,9 +68,17 @@ struct Goal: Identifiable, Codable, Hashable {
     let createdAt: Date
     var updatedAt: Date
     var userId: String
-    
+
+    // Phase 1.5 additions
+    var priority: Int              // user-orderable; 0 = default, higher = sorted first
+    var isArchived: Bool           // hidden from active list, not deleted
+    var pausedAt: Date?            // if set, ignored by allocation rules and pace calc
+    var categoryStorageKey: String?// optional Category link for round-up rules
+    var originalTargetAmount: Int  // immutable snapshot of target at creation
+    var householdId: UUID?         // set when shared (Phase 8)
+
     enum CodingKeys: String, CodingKey {
-        case id, name, type, currency, icon, notes
+        case id, name, type, currency, icon, notes, priority
         case targetAmount = "target_amount"
         case currentAmount = "current_amount"
         case targetDate = "target_date"
@@ -80,8 +88,13 @@ struct Goal: Identifiable, Codable, Hashable {
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case userId = "user_id"
+        case isArchived = "is_archived"
+        case pausedAt = "paused_at"
+        case categoryStorageKey = "category_storage_key"
+        case originalTargetAmount = "original_target_amount"
+        case householdId = "household_id"
     }
-    
+
     init(
         id: UUID = UUID(),
         name: String,
@@ -97,7 +110,13 @@ struct Goal: Identifiable, Codable, Hashable {
         isCompleted: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
-        userId: String
+        userId: String,
+        priority: Int = 0,
+        isArchived: Bool = false,
+        pausedAt: Date? = nil,
+        categoryStorageKey: String? = nil,
+        originalTargetAmount: Int? = nil,
+        householdId: UUID? = nil
     ) {
         self.id = id
         self.name = name
@@ -114,6 +133,38 @@ struct Goal: Identifiable, Codable, Hashable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.userId = userId
+        self.priority = priority
+        self.isArchived = isArchived
+        self.pausedAt = pausedAt
+        self.categoryStorageKey = categoryStorageKey
+        self.originalTargetAmount = originalTargetAmount ?? targetAmount
+        self.householdId = householdId
+    }
+
+    // Backfill-tolerant decoder: rows predating Phase 1.5 lack the new columns.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.type = try c.decode(GoalType.self, forKey: .type)
+        self.targetAmount = try c.decode(Int.self, forKey: .targetAmount)
+        self.currentAmount = try c.decode(Int.self, forKey: .currentAmount)
+        self.currency = try c.decode(String.self, forKey: .currency)
+        self.targetDate = try c.decodeIfPresent(Date.self, forKey: .targetDate)
+        self.linkedAccountId = try c.decodeIfPresent(UUID.self, forKey: .linkedAccountId)
+        self.icon = try c.decode(String.self, forKey: .icon)
+        self.colorToken = try c.decode(String.self, forKey: .colorToken)
+        self.notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        self.isCompleted = try c.decode(Bool.self, forKey: .isCompleted)
+        self.createdAt = try c.decode(Date.self, forKey: .createdAt)
+        self.updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+        self.userId = try c.decode(String.self, forKey: .userId)
+        self.priority = try c.decodeIfPresent(Int.self, forKey: .priority) ?? 0
+        self.isArchived = try c.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
+        self.pausedAt = try c.decodeIfPresent(Date.self, forKey: .pausedAt)
+        self.categoryStorageKey = try c.decodeIfPresent(String.self, forKey: .categoryStorageKey)
+        self.originalTargetAmount = try c.decodeIfPresent(Int.self, forKey: .originalTargetAmount) ?? self.targetAmount
+        self.householdId = try c.decodeIfPresent(UUID.self, forKey: .householdId)
     }
     
     // MARK: - Computed
@@ -131,10 +182,16 @@ struct Goal: Identifiable, Codable, Hashable {
         max(0, targetAmount - currentAmount)
     }
     
+    /// True if this goal should be skipped by allocation rules and pace calculations.
+    var isInactive: Bool {
+        isArchived || pausedAt != nil || isCompleted
+    }
+
     /// Monthly saving needed to hit target date.
     /// For overdue goals, returns the full remaining amount (needs immediate attention).
-    /// For goals with no deadline, returns nil.
+    /// For goals with no deadline, paused, or archived: nil.
     var requiredMonthlySaving: Int? {
+        guard !isInactive else { return nil }
         guard let target = targetDate else { return nil }
         let remaining = remainingAmount
         guard remaining > 0 else { return 0 }
@@ -257,24 +314,38 @@ struct Goal: Identifiable, Codable, Hashable {
 struct GoalContribution: Identifiable, Codable, Hashable {
     let id: UUID
     let goalId: UUID
-    var amount: Int               // cents
+    var amount: Int               // cents (negative = withdrawal)
     var note: String?
     var source: ContributionSource
     let createdAt: Date
-    
+
+    // Phase 1.5 additions
+    var linkedTransactionId: UUID?  // for source == .transaction / .roundUp
+    var linkedRuleId: UUID?         // for source == .allocationRule
+    var isReversed: Bool            // soft-undo flag
+    var reversedAt: Date?
+
     enum CodingKeys: String, CodingKey {
         case id, amount, note, source
         case goalId = "goal_id"
         case createdAt = "created_at"
+        case linkedTransactionId = "linked_transaction_id"
+        case linkedRuleId = "linked_rule_id"
+        case isReversed = "is_reversed"
+        case reversedAt = "reversed_at"
     }
-    
+
     init(
         id: UUID = UUID(),
         goalId: UUID,
         amount: Int,
         note: String? = nil,
         source: ContributionSource = .manual,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        linkedTransactionId: UUID? = nil,
+        linkedRuleId: UUID? = nil,
+        isReversed: Bool = false,
+        reversedAt: Date? = nil
     ) {
         self.id = id
         self.goalId = goalId
@@ -282,11 +353,32 @@ struct GoalContribution: Identifiable, Codable, Hashable {
         self.note = note
         self.source = source
         self.createdAt = createdAt
+        self.linkedTransactionId = linkedTransactionId
+        self.linkedRuleId = linkedRuleId
+        self.isReversed = isReversed
+        self.reversedAt = reversedAt
     }
-    
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.goalId = try c.decode(UUID.self, forKey: .goalId)
+        self.amount = try c.decode(Int.self, forKey: .amount)
+        self.note = try c.decodeIfPresent(String.self, forKey: .note)
+        self.source = (try? c.decode(ContributionSource.self, forKey: .source)) ?? .manual
+        self.createdAt = try c.decode(Date.self, forKey: .createdAt)
+        self.linkedTransactionId = try c.decodeIfPresent(UUID.self, forKey: .linkedTransactionId)
+        self.linkedRuleId = try c.decodeIfPresent(UUID.self, forKey: .linkedRuleId)
+        self.isReversed = try c.decodeIfPresent(Bool.self, forKey: .isReversed) ?? false
+        self.reversedAt = try c.decodeIfPresent(Date.self, forKey: .reversedAt)
+    }
+
     enum ContributionSource: String, Codable {
         case manual
         case transaction
         case transfer
+        case allocationRule = "allocation_rule"
+        case aiAction = "ai_action"
+        case roundUp = "round_up"
     }
 }

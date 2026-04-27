@@ -10,17 +10,17 @@ struct MoreView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 10) {
-                    NavigationLink { AccountsListView() } label: {
+                    NavigationLink { AccountsListView(store: $store) } label: {
                         moreRowLabel(icon: "building.columns", title: "Accounts", subtitle: "Net worth & balances", color: DS.Colors.accent)
                     }
                     .buttonStyle(.plain)
 
-                    NavigationLink { GoalsOverviewView() } label: {
+                    NavigationLink { GoalsOverviewView(store: $store) } label: {
                         moreRowLabel(icon: "flag.fill", title: "Goals", subtitle: "Savings targets & progress", color: DS.Colors.positive)
                     }
                     .buttonStyle(.plain)
 
-                    NavigationLink { SubscriptionsOverviewView() } label: {
+                    NavigationLink { SubscriptionsOverviewView(store: $store) } label: {
                         moreRowLabel(icon: "creditcard.and.123", title: "Subscriptions", subtitle: "Recurring charges & alerts", color: Color(hexValue: 0xFF9F0A))
                     }
                     .buttonStyle(.plain)

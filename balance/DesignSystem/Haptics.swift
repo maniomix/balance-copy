@@ -66,6 +66,25 @@ enum Haptics {
         }
     }
 
+    /// Light tick when a goal contribution crosses a 25 / 50 / 75 % milestone.
+    static func goalMilestone() {
+        soft()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+            light()
+        }
+    }
+
+    /// Celebratory pattern fired when a goal hits 100%.
+    static func goalCompleted() {
+        medium()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            heavy()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
+                success()
+            }
+        }
+    }
+
     static func budgetExceeded() {
         heavy()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {

@@ -16,6 +16,24 @@ import WidgetKit
 @MainActor
 enum WidgetDataWriter {
 
+    /// Convert a Goal `colorToken` to a 6-char hex string for the widget.
+    /// Mirrors `GoalColorHelper.color(for:)` but without the SwiftUI Color wrapping.
+    private static func goalColorHex(_ token: String) -> String {
+        switch token {
+        case "positive": return "2ECC71"
+        case "warning":  return "F39C12"
+        case "danger":   return "E74C3C"
+        case "accent":   return "338CFF"
+        case "subtext":  return "8E8E93"
+        case "blue":     return "4A90D9"
+        case "purple":   return "8B5CF6"
+        case "teal":     return "14B8A6"
+        case "pink":     return "EC4899"
+        case "indigo":   return "6366F1"
+        default:         return "338CFF"
+        }
+    }
+
     private static func categoryHex(_ cat: Category) -> String {
         switch cat {
         case .groceries:  return "2ECC71"
@@ -152,6 +170,29 @@ enum WidgetDataWriter {
             .prefix(5)
             .map { WidgetCategory(name: $0.key, icon: $0.value.icon, amount: $0.value.amount, colorHex: $0.value.colorHex) }
 
+        // ── Top Goals (max 3 by priority) ─────────────
+        // Goals Rebuild Phase 9: surface in-memory GoalManager state.
+        // If goals haven't been fetched yet, this is empty and any goals
+        // widget renders the empty state.
+        let goalManager = GoalManager.shared
+        let topGoalSlice = goalManager.goalsByPriority.prefix(3)
+        let topGoals: [WidgetGoal] = topGoalSlice.map { goal in
+            let days: Int?
+            if let target = goal.targetDate {
+                days = cal.dateComponents([.day], from: now, to: target).day
+            } else {
+                days = nil
+            }
+            return WidgetGoal(
+                name: goal.name,
+                icon: goal.icon,
+                currentAmount: goal.currentAmount,
+                targetAmount: goal.targetAmount,
+                colorHex: goalColorHex(goal.colorToken),
+                daysRemaining: days
+            )
+        }
+
         // ── Currency Symbol ───────────────────────────
         let currencyCode: String = UserDefaults.standard.string(forKey: "app.currency") ?? "EUR"
         let currencySymbol: String
@@ -187,6 +228,7 @@ enum WidgetDataWriter {
             incomeThisMonth: incomeThisMonth,
             weeklySpending: weeklySpending,
             topCategories: topCategories,
+            topGoals: topGoals.isEmpty ? nil : topGoals,
             currencySymbol: currencySymbol,
             lastUpdated: now
         )

@@ -9,7 +9,8 @@ struct DashboardView: View {
     var goToTransactions: (() -> Void)? = nil
     @State private var showAdd = false
     @State private var trendSelectedDay: Int? = nil
-    @State private var showBarChart: Bool = false
+    @State private var showTrendAnalytics: Bool = false
+    @State private var trendPage: TrendChartPage = .pace
     @StateObject private var subscriptionManager = SubscriptionManager.shared
 
     @EnvironmentObject private var authManager: AuthManager
@@ -55,6 +56,7 @@ struct DashboardView: View {
     // AI
     @State private var showAIChat = false
     @State private var showProactiveFeed = false
+    @State private var showMonthlyBriefing = false
     @StateObject private var insightEngine = AIInsightEngine.shared
     @StateObject private var budgetRescue = AIBudgetRescue.shared
     @StateObject private var proactiveEngine = AIProactiveEngine.shared
@@ -121,7 +123,7 @@ struct DashboardView: View {
                             DS.SectionHeader(title: "Insights", icon: "lightbulb.fill")
 
                             ForecastDashboardCard()
-                            NetWorthDashboardCard()
+                            NetWorthDashboardCard(store: $store)
                             PlanningInsightsDashboardCard()
                         }
 
@@ -131,7 +133,7 @@ struct DashboardView: View {
                         VStack(spacing: 12) {
                             DS.SectionHeader(title: "Goals", icon: "target")
 
-                            GoalsDashboardCard()
+                            GoalsDashboardCard(store: $store)
                             ReviewDashboardCard(store: $store)
                         }
 
@@ -141,7 +143,7 @@ struct DashboardView: View {
                         VStack(spacing: 12) {
                             DS.SectionHeader(title: "More", icon: "ellipsis.circle.fill")
 
-                            SubscriptionsDashboardCard()
+                            SubscriptionsDashboardCard(store: $store)
                             HouseholdDashboardCard(store: $store)
 
                             // Payment breakdown — horizontal scroll
@@ -213,19 +215,9 @@ struct DashboardView: View {
                                 }
                             }
 
-                            // Ask AI button
-                            Button { showAIChat = true } label: {
-                                HStack {
-                                    Image(systemName: "sparkles")
-                                        .font(.system(size: 14, weight: .semibold))
-                                    Text("Ask Centmond AI")
-                                        .font(DS.Typography.callout)
-                                }
-                                .foregroundStyle(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .background(DS.Colors.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            }
+                            // Monthly briefing entry
+                            monthlyBriefingEntryCard
+
                         }
 
                         advisorInsightsCard
@@ -363,6 +355,45 @@ struct DashboardView: View {
         .sheet(isPresented: $showProactiveFeed) {
             AIProactiveView(store: $store)
         }
+        .sheet(isPresented: $showMonthlyBriefing) {
+            NavigationStack {
+                MonthlyBriefingScreen(store: $store)
+            }
+        }
+    }
+
+    // MARK: - Monthly Briefing entry card
+
+    private var monthlyBriefingEntryCard: some View {
+        Button { showMonthlyBriefing = true } label: {
+            DS.Card {
+                HStack(spacing: 12) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 22))
+                        .foregroundStyle(DS.Colors.accent)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Monthly Briefing")
+                            .font(DS.Typography.callout)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(DS.Colors.text)
+                        Text("Your \(monthTitle) overview at a glance")
+                            .font(DS.Typography.caption)
+                            .foregroundStyle(DS.Colors.subtext)
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(DS.Colors.subtext)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Monthly Briefing for \(monthTitle).")
+        .accessibilityHint("Double tap to open your personalized financial summary.")
     }
 
     // MARK: - Header
@@ -734,177 +765,256 @@ struct DashboardView: View {
     // MARK: - Trend Chart
 
     private var trendCard: some View {
-        let points = Analytics.dailySpendPoints(store: store)
-        let daysWithTransactions = getDaysWithTransactions()
+        let model = DashboardTrendModel(store: store, selectedMonth: store.selectedMonth)
+        let points = model.dailyPoints
+        let pace = model.idealPace
+        let prev = model.prevMonthCumulative
 
         return DS.Card {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("Daily Trend")
-                        .font(DS.Typography.section)
-                        .foregroundStyle(DS.Colors.text)
-                    Spacer()
-                    // Toggle between line and bar chart
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    trendPageSelector(hasPace: !pace.isEmpty, hasPrev: !prev.isEmpty)
+                    Spacer(minLength: 8)
                     Button {
-                        withAnimation(DS.Animations.quick) { showBarChart.toggle() }
+                        Haptics.light()
+                        showTrendAnalytics = true
                     } label: {
-                        Image(systemName: showBarChart ? "chart.xyaxis.line" : "chart.bar.fill")
-                            .font(.system(size: 14, weight: .medium))
+                        Text("advanced")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
                             .foregroundStyle(DS.Colors.subtext)
-                            .frame(width: 32, height: 32)
-                            .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(DS.Colors.surface2, in: Capsule())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(showBarChart ? "Switch to line chart" : "Switch to bar chart")
+                    .accessibilityLabel("Open full analytics")
                 }
+                .padding(.bottom, 8)
 
                 if points.isEmpty {
                     Text("Not enough data")
                         .font(DS.Typography.body)
                         .foregroundStyle(DS.Colors.subtext)
                         .padding(.vertical, 6)
-                } else if showBarChart {
-                    // ── Bar chart mode ──
-                    Chart(points) { p in
-                        BarMark(
-                            x: .value("Day", p.day),
-                            y: .value("Amount", p.amount)
-                        )
-                        .cornerRadius(3)
-                        .foregroundStyle(
-                            daysWithTransactions.contains(p.day)
-                                ? DS.Colors.accent
-                                : DS.Colors.accent.opacity(0.25)
-                        )
-                    }
-                    .chartXAxis {
-                        AxisMarks(values: .stride(by: 5)) { _ in
-                            AxisGridLine()
-                                .foregroundStyle(DS.Colors.grid.opacity(0.5))
-                            AxisValueLabel()
-                                .foregroundStyle(DS.Colors.subtext)
-                                .font(DS.Typography.caption)
-                        }
-                    }
-                    .chartYAxis {
-                        AxisMarks(values: .automatic(desiredCount: 4)) { value in
-                            AxisGridLine()
-                                .foregroundStyle(DS.Colors.grid.opacity(0.5))
-                            AxisTick()
-                                .foregroundStyle(DS.Colors.grid)
-                            AxisValueLabel {
-                                if let vInt = value.as(Int.self) {
-                                    Text(DS.Format.money(vInt))
-                                        .foregroundStyle(DS.Colors.subtext)
-                                        .font(DS.Typography.caption)
-                                } else if let v = value.as(Double.self) {
-                                    Text(DS.Format.money(Int(v.rounded())))
-                                        .foregroundStyle(DS.Colors.subtext)
-                                        .font(DS.Typography.caption)
-                                }
-                            }
-                        }
-                    }
-                    .chartOverlay { proxy in
-                        trendChartOverlay(proxy: proxy)
-                    }
-                    .frame(height: 200)
                 } else {
-                    // ── Line / area chart mode (original) ──
-                    Chart {
-                        // Area fill
-                        ForEach(points) { p in
-                            AreaMark(
-                                x: .value("Day", p.day),
-                                yStart: .value("Baseline", 0),
-                                yEnd: .value("Amount", p.amount)
-                            )
-                            .interpolationMethod(.catmullRom)
-                            .foregroundStyle(
-                                LinearGradient(
-                                    colors: [
-                                        DS.Colors.accent.opacity(0.3),
-                                        DS.Colors.accent.opacity(0.05)
-                                    ],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
+                    Group {
+                        switch trendPage {
+                        case .pace:      paceChart(points: points, pace: pace)
+                        case .lastMonth: lastMonthChart(points: points, prev: prev)
+                        case .daily:     dailyChart(points: points)
                         }
-
-                        // Line
-                        ForEach(points) { p in
-                            LineMark(
-                                x: .value("Day", p.day),
-                                y: .value("Amount", p.amount)
-                            )
-                            .interpolationMethod(.catmullRom)
-                            .foregroundStyle(DS.Colors.accent)
-                            .lineStyle(StrokeStyle(lineWidth: 2.5))
-                        }
-
-                        // Points for days with transactions
-                        ForEach(points.filter { daysWithTransactions.contains($0.day) }) { p in
-                            PointMark(
-                                x: .value("Day", p.day),
-                                y: .value("Amount", p.amount)
-                            )
-                            .foregroundStyle(DS.Colors.accent)
-                            .symbolSize(30)
-                        }
-                    }
-                    .chartXAxis {
-                        AxisMarks(values: .stride(by: 5)) { _ in
-                            AxisGridLine()
-                                .foregroundStyle(DS.Colors.grid.opacity(0.5))
-                            AxisValueLabel()
-                                .foregroundStyle(DS.Colors.subtext)
-                                .font(DS.Typography.caption)
-                        }
-                    }
-                    .chartYAxis {
-                        AxisMarks(values: .automatic(desiredCount: 4)) { value in
-                            AxisGridLine()
-                                .foregroundStyle(DS.Colors.grid.opacity(0.5))
-                            AxisTick()
-                                .foregroundStyle(DS.Colors.grid)
-                            AxisValueLabel {
-                                if let vInt = value.as(Int.self) {
-                                    Text(DS.Format.money(vInt))
-                                        .foregroundStyle(DS.Colors.subtext)
-                                        .font(DS.Typography.caption)
-                                } else if let v = value.as(Double.self) {
-                                    Text(DS.Format.money(Int(v.rounded())))
-                                        .foregroundStyle(DS.Colors.subtext)
-                                        .font(DS.Typography.caption)
-                                }
-                            }
-                        }
-                    }
-                    .chartOverlay { proxy in
-                        trendChartOverlay(proxy: proxy)
                     }
                     .frame(height: 200)
+                    .accessibilityLabel(trendChartA11yLabel(headline: model.headline))
+                    .transition(.opacity)
+                    .id(trendPage)
+
+                    trendLegendForPage(hasPace: !pace.isEmpty, hasPrev: !prev.isEmpty)
                 }
+            }
+            .animation(.easeInOut(duration: 0.3), value: store.selectedMonth)
+        }
+        .sheet(isPresented: $showTrendAnalytics) {
+            AdvancedChartsView(
+                store: $store,
+                initialRange: .month,
+                initialAnchor: "chart.trend"
+            )
+        }
+    }
+
+    // MARK: - Trend pages
+
+    enum TrendChartPage: String, CaseIterable, Hashable {
+        case pace, lastMonth, daily
+        var title: String {
+            switch self {
+            case .pace: return "Pace"
+            case .lastMonth: return "vs Last Month"
+            case .daily: return "Daily"
             }
         }
     }
 
-    // Helper to get days with transactions
-    private func getDaysWithTransactions() -> Set<Int> {
-        let monthTx = Analytics.monthTransactions(store: store)
-        let calendar = Calendar.current
-
-        var days = Set<Int>()
-        for tx in monthTx {
-            let day = calendar.component(.day, from: tx.date)
-            days.insert(day)
+    @ViewBuilder
+    private func trendPageSelector(hasPace: Bool, hasPrev: Bool) -> some View {
+        let pages: [TrendChartPage] = TrendChartPage.allCases.filter { p in
+            switch p {
+            case .pace: return hasPace
+            case .lastMonth: return hasPrev
+            case .daily: return true
+            }
         }
-        return days
+        if pages.count > 1 {
+            HStack(spacing: 6) {
+                ForEach(pages, id: \.self) { page in
+                    Button {
+                        guard trendPage != page else { return }
+                        trendSelectedDay = nil
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            trendPage = page
+                        }
+                        Haptics.selection()
+                    } label: {
+                        Text(page.title)
+                            .font(.system(size: 11, weight: trendPage == page ? .semibold : .medium, design: .rounded))
+                            .foregroundStyle(trendPage == page ? Color(uiColor: .systemBackground) : DS.Colors.subtext)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                trendPage == page
+                                ? AnyShapeStyle(Color(uiColor: .label))
+                                : AnyShapeStyle(DS.Colors.surface2),
+                                in: Capsule()
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .onAppear {
+                if !pages.contains(trendPage) { trendPage = pages.first ?? .daily }
+            }
+        }
     }
 
     @ViewBuilder
-    private func trendChartOverlay(proxy: ChartProxy) -> some View {
+    private func trendLegendForPage(hasPace: Bool, hasPrev: Bool) -> some View {
+        HStack(spacing: 10) {
+            Spacer()
+            switch trendPage {
+            case .pace:
+                if hasPace {
+                    legendHint(label: "pace", opacity: 0.5, dash: [4, 3])
+                        .accessibilityLabel("Ideal budget pace reference line")
+                }
+            case .lastMonth:
+                if hasPrev {
+                    legendHint(label: "last mo", opacity: 0.4, dash: [2, 3])
+                        .accessibilityLabel("Previous month cumulative spending")
+                }
+            case .daily:
+                EmptyView()
+            }
+        }
+    }
+
+    // MARK: - Per-page charts
+
+    private func paceChart(points: [DashboardTrendModel.DayPoint],
+                           pace: [DashboardTrendModel.PacePoint]) -> some View {
+        Chart {
+            ForEach(pace) { p in
+                LineMark(
+                    x: .value("Day", p.day),
+                    y: .value("Target", p.target),
+                    series: .value("Series", "Pace")
+                )
+                .foregroundStyle(DS.Colors.subtext.opacity(0.5))
+                .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [4, 3]))
+            }
+            ForEach(points) { p in
+                AreaMark(
+                    x: .value("Day", p.day),
+                    yStart: .value("Baseline", 0),
+                    yEnd: .value("Cumulative", p.cumulative)
+                )
+                .interpolationMethod(.catmullRom)
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [DS.Colors.accent.opacity(0.28), DS.Colors.accent.opacity(0.04)],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                )
+            }
+            ForEach(points) { p in
+                LineMark(
+                    x: .value("Day", p.day),
+                    y: .value("Cumulative", p.cumulative),
+                    series: .value("Series", "Spent")
+                )
+                .interpolationMethod(.catmullRom)
+                .foregroundStyle(DS.Colors.accent)
+                .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
+            }
+        }
+        .modifier(TrendChartAxes())
+        .chartOverlay { proxy in trendChartOverlay(proxy: proxy, mode: .pace) }
+    }
+
+    private func lastMonthChart(points: [DashboardTrendModel.DayPoint],
+                                prev: [DashboardTrendModel.DayPoint]) -> some View {
+        Chart {
+            ForEach(prev) { p in
+                LineMark(
+                    x: .value("Day", p.day),
+                    y: .value("PrevCumulative", p.cumulative),
+                    series: .value("Series", "Previous")
+                )
+                .foregroundStyle(DS.Colors.subtext.opacity(0.55))
+                .lineStyle(StrokeStyle(lineWidth: 1.8, lineCap: .round, dash: [2, 3]))
+                .interpolationMethod(.catmullRom)
+            }
+            ForEach(points) { p in
+                LineMark(
+                    x: .value("Day", p.day),
+                    y: .value("Cumulative", p.cumulative),
+                    series: .value("Series", "Spent")
+                )
+                .interpolationMethod(.catmullRom)
+                .foregroundStyle(DS.Colors.accent)
+                .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
+            }
+        }
+        .modifier(TrendChartAxes())
+        .chartOverlay { proxy in trendChartOverlay(proxy: proxy, mode: .lastMonth) }
+    }
+
+    private func dailyChart(points: [DashboardTrendModel.DayPoint]) -> some View {
+        Chart {
+            ForEach(points) { p in
+                BarMark(
+                    x: .value("Day", p.day),
+                    y: .value("Spent", p.spent)
+                )
+                .cornerRadius(3)
+                .foregroundStyle(
+                    p.isAnomaly
+                    ? DS.Colors.danger.opacity(0.85)
+                    : DS.Colors.accent.opacity(p.spent > 0 ? 0.85 : 0.25)
+                )
+            }
+        }
+        .modifier(TrendChartAxes())
+        .chartOverlay { proxy in trendChartOverlay(proxy: proxy, mode: .daily) }
+    }
+
+    private func trendChartA11yLabel(headline h: DashboardTrendModel.Headline) -> String {
+        var parts: [String] = []
+        parts.append("Daily cumulative spending chart")
+        parts.append("Spent \(h.spent.currencyFormatted(showDecimal: false))")
+        if h.budget > 0 {
+            parts.append("of \(h.budget.currencyFormatted(showDecimal: false)) budget")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    private func legendHint(label: String, opacity: Double, dash: [CGFloat]) -> some View {
+        HStack(spacing: 5) {
+            Rectangle()
+                .fill(DS.Colors.subtext.opacity(opacity))
+                .frame(width: 12, height: 1.5)
+            Text(label)
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(DS.Colors.subtext)
+                .textCase(.uppercase)
+                .kerning(0.4)
+        }
+    }
+
+    enum TrendOverlayMode { case pace, lastMonth, daily }
+
+    @ViewBuilder
+    private func trendChartOverlay(proxy: ChartProxy, mode: TrendOverlayMode) -> some View {
         GeometryReader { geo in
             if let plotAnchor = proxy.plotFrame {
                 let frame = geo[plotAnchor]
@@ -920,7 +1030,8 @@ struct DashboardView: View {
                             proxy: proxy,
                             frame: frame,
                             geo: geo,
-                            selectedDay: selDay
+                            selectedDay: selDay,
+                            mode: mode
                         )
                     }
                 }
@@ -929,7 +1040,10 @@ struct DashboardView: View {
     }
 
     private func trendDragGesture(proxy: ChartProxy, frame: CGRect) -> some Gesture {
-        DragGesture(minimumDistance: 0)
+        // minimumDistance: 2 keeps tiny jitters from stealing the gesture,
+        // and also makes a plain horizontal "swipe" by accident on the card
+        // less likely to register a scrub — but still feels instant on press.
+        DragGesture(minimumDistance: 2)
             .onChanged { value in
                 let loc = value.location
                 guard frame.contains(loc) else { return }
@@ -952,23 +1066,66 @@ struct DashboardView: View {
             }
     }
 
+    // MARK: - Shared axis modifier
+
+    private struct TrendChartAxes: ViewModifier {
+        func body(content: Content) -> some View {
+            content
+                .chartXAxis {
+                    AxisMarks(values: .stride(by: 5)) { _ in
+                        AxisGridLine().foregroundStyle(DS.Colors.grid.opacity(0.5))
+                        AxisValueLabel()
+                            .foregroundStyle(DS.Colors.subtext)
+                            .font(DS.Typography.caption)
+                    }
+                }
+                .chartYAxis {
+                    AxisMarks(values: .automatic(desiredCount: 4)) { value in
+                        AxisGridLine().foregroundStyle(DS.Colors.grid.opacity(0.5))
+                        AxisTick().foregroundStyle(DS.Colors.grid)
+                        AxisValueLabel {
+                            if let vInt = value.as(Int.self) {
+                                Text(DS.Format.money(vInt))
+                                    .foregroundStyle(DS.Colors.subtext)
+                                    .font(DS.Typography.caption)
+                            } else if let v = value.as(Double.self) {
+                                Text(DS.Format.money(Int(v.rounded())))
+                                    .foregroundStyle(DS.Colors.subtext)
+                                    .font(DS.Typography.caption)
+                            }
+                        }
+                    }
+                }
+        }
+    }
+
     @ViewBuilder
     private func trendTooltipView(
         proxy: ChartProxy,
         frame: CGRect,
         geo: GeometryProxy,
-        selectedDay: Int
+        selectedDay: Int,
+        mode: TrendOverlayMode
     ) -> some View {
-        let points = Analytics.dailySpendPoints(store: store)
+        let model = DashboardTrendModel(store: store, selectedMonth: store.selectedMonth)
+        let points = model.dailyPoints
+        let pace = model.idealPace
+        let prev = model.prevMonthCumulative
 
         let nearest = points.min { a, b in
             abs(a.day - selectedDay) < abs(b.day - selectedDay)
         }
 
         if let p = nearest,
-           let xPos = proxy.position(forX: p.day),
-           let yPos = proxy.position(forY: p.amount) {
+           let xPos = proxy.position(forX: p.day) {
 
+            let yValue: Int = {
+                switch mode {
+                case .pace, .lastMonth: return p.cumulative
+                case .daily: return p.spent
+                }
+            }()
+            let yPos = proxy.position(forY: yValue) ?? 0
             let x = frame.minX + xPos
             let y = frame.minY + yPos
 
@@ -979,51 +1136,109 @@ struct DashboardView: View {
             .stroke(DS.Colors.text.opacity(0.35), lineWidth: 1)
 
             Circle()
-                .fill(DS.Colors.text.opacity(0.18))
+                .fill(DS.Colors.accent.opacity(0.25))
                 .frame(width: 18, height: 18)
                 .position(x: x, y: y)
 
             Circle()
-                .fill(DS.Colors.text)
+                .fill(DS.Colors.accent)
                 .frame(width: 7, height: 7)
                 .position(x: x, y: y)
 
-            tooltipCard(point: p, x: x, y: y, geo: geo, frame: frame)
+            cumulativeTooltipCard(
+                point: p,
+                mode: mode,
+                paceTarget: pace.first(where: { $0.day == p.day })?.target,
+                prevCumulative: prev.first(where: { $0.day == p.day })?.cumulative,
+                x: x, y: y, geo: geo, frame: frame
+            )
         }
     }
 
     @ViewBuilder
-    private func tooltipCard(
-        point: Analytics.DayPoint,
-        x: CGFloat,
-        y: CGFloat,
-        geo: GeometryProxy,
-        frame: CGRect
+    private func cumulativeTooltipCard(
+        point: DashboardTrendModel.DayPoint,
+        mode: TrendOverlayMode,
+        paceTarget: Int?,
+        prevCumulative: Int?,
+        x: CGFloat, y: CGFloat,
+        geo: GeometryProxy, frame: CGRect
     ) -> some View {
-        let tooltipW: CGFloat = 170
+        let tooltipW: CGFloat = 180
         let pad: CGFloat = 10
         let tx = min(max(x + 14, pad + tooltipW / 2), geo.size.width - pad - tooltipW / 2)
-        let ty = max(frame.minY + 12, y - 44)
+        let ty = max(frame.minY + 12, y - 58)
 
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text("Spent")
-                    .font(DS.Typography.caption.weight(.semibold))
-                    .foregroundStyle(DS.Colors.text)
-                Spacer()
-                Text(DS.Format.money(point.amount))
-                    .font(DS.Typography.caption.weight(.semibold))
-                    .foregroundStyle(DS.Colors.text)
-            }
-
+        VStack(alignment: .leading, spacing: 5) {
             Text(dateString(forDay: point.day))
-                .font(DS.Typography.caption)
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
                 .foregroundStyle(DS.Colors.subtext)
+                .textCase(.uppercase)
+                .kerning(0.4)
+
+            switch mode {
+            case .pace:
+                tooltipRow(label: "Cumulative", value: point.cumulative, big: true)
+                tooltipRow(label: "Day's spend", value: point.spent, big: false)
+                if let paceTarget {
+                    let delta = point.cumulative - paceTarget
+                    HStack(spacing: 4) {
+                        Image(systemName: delta >= 0 ? "arrow.up.right" : "arrow.down.right")
+                            .font(.system(size: 9, weight: .bold))
+                        Text(delta >= 0
+                             ? "over pace by \(delta.currencyFormatted(showDecimal: false))"
+                             : "under pace by \(abs(delta).currencyFormatted(showDecimal: false))")
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundStyle(delta > 0 ? DS.Colors.danger : DS.Colors.positive)
+                }
+
+            case .lastMonth:
+                tooltipRow(label: "This month", value: point.cumulative, big: true)
+                if let prevCumulative {
+                    tooltipRow(label: "Last month", value: prevCumulative, big: false)
+                    let delta = point.cumulative - prevCumulative
+                    HStack(spacing: 4) {
+                        Image(systemName: delta >= 0 ? "arrow.up.right" : "arrow.down.right")
+                            .font(.system(size: 9, weight: .bold))
+                        Text(delta >= 0
+                             ? "+\(delta.currencyFormatted(showDecimal: false)) vs last"
+                             : "\(delta.currencyFormatted(showDecimal: false)) vs last")
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundStyle(delta > 0 ? DS.Colors.danger : DS.Colors.positive)
+                }
+
+            case .daily:
+                tooltipRow(label: "Day's spend", value: point.spent, big: true)
+                tooltipRow(label: "Cumulative", value: point.cumulative, big: false)
+                if point.isAnomaly {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 9, weight: .bold))
+                        Text("unusually high")
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundStyle(DS.Colors.danger)
+                }
+            }
         }
         .padding(10)
         .frame(width: tooltipW, alignment: .leading)
         .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .position(x: tx, y: ty)
+    }
+
+    private func tooltipRow(label: String, value: Int, big: Bool) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.system(size: big ? 11 : 10, weight: .medium, design: .rounded))
+                .foregroundStyle(DS.Colors.subtext)
+            Spacer()
+            Text(value.currencyFormatted(showDecimal: false))
+                .font(.system(size: big ? 13 : 11, weight: big ? .bold : .semibold, design: .rounded))
+                .foregroundStyle(DS.Colors.text)
+        }
     }
 
     // MARK: - Category Card
@@ -1038,7 +1253,7 @@ struct DashboardView: View {
 
         // Rows to show under the chart:
         let topCats: [Category] = breakdown.prefix(6).map { $0.category }
-        let cappedCats: [Category] = Category.allCases.filter { store.categoryBudget(for: $0) > 0 }
+        let cappedCats: [Category] = store.allCategories.filter { store.categoryBudget(for: $0) > 0 }
         let orderedCats: [Category] = Array(NSOrderedSet(array: topCats + cappedCats))
             .compactMap { $0 as? Category }
 
@@ -1212,6 +1427,30 @@ struct DashboardView: View {
                         .font(DS.Typography.body)
                         .foregroundStyle(DS.Colors.subtext)
                         .padding(.vertical, 6)
+                } else if breakdown.count == 1, let only = breakdown.first {
+                    // Single method — render full-width summary, no scroll
+                    PaymentMethodRow(item: only)
+
+                    Divider().foregroundStyle(DS.Colors.grid)
+
+                    HStack(spacing: 8) {
+                        Image(systemName: "lightbulb.fill")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color(hexValue: 0xFFD93D))
+                        Text(only.method == .cash
+                             ? "All spending is in cash this month"
+                             : only.method == .card
+                                ? "All spending is on card this month"
+                                : "Only one payment method used this month")
+                            .font(DS.Typography.caption)
+                            .foregroundStyle(DS.Colors.subtext)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color(hexValue: 0xFFD93D).opacity(0.1))
+                    )
                 } else {
                     // Horizontal scroll for payment methods
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -1259,6 +1498,60 @@ struct DashboardView: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - Payment Method Row (single-method full-width)
+
+    private struct PaymentMethodRow: View {
+        let item: Analytics.PaymentBreakdown
+
+        @Environment(\.colorScheme) private var colorScheme
+
+        private var methodColor: Color {
+            switch item.method {
+            case .card:   return DS.Colors.accent
+            case .cash:   return DS.Colors.positive
+            default:      return DS.Colors.warning
+            }
+        }
+
+        var body: some View {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(methodColor.opacity(0.15))
+                        .frame(width: 44, height: 44)
+                    Image(systemName: item.method.icon)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(methodColor)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.method.displayName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(DS.Colors.text)
+                    Text("\(Int(item.percentage * 100))% of spending")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(DS.Colors.subtext)
+                }
+
+                Spacer()
+
+                Text(DS.Format.money(item.total))
+                    .font(.system(size: 15, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(DS.Colors.text)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(colorScheme == .dark ? DS.Colors.surfaceElevated : DS.Colors.surface2)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(methodColor.opacity(colorScheme == .dark ? 0.2 : 0.15), lineWidth: 1)
+            )
         }
     }
 

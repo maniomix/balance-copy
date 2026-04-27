@@ -140,24 +140,43 @@ class GoalManager: ObservableObject {
 
     // MARK: - Contributions
 
-    func addContribution(to goal: Goal, amount: Int, note: String? = nil, source: GoalContribution.ContributionSource = .manual) async -> Bool {
+    func addContribution(
+        to goal: Goal,
+        amount: Int,
+        note: String? = nil,
+        source: GoalContribution.ContributionSource = .manual,
+        linkedTransactionId: UUID? = nil,
+        linkedRuleId: UUID? = nil
+    ) async -> Bool {
         let contribution = GoalContribution(
             goalId: goal.id,
             amount: amount,
             note: note,
-            source: source
+            source: source,
+            linkedTransactionId: linkedTransactionId,
+            linkedRuleId: linkedRuleId
         )
         errorMessage = nil
 
         do {
             try await client.from("goal_contributions").insert(contribution).execute()
 
-            // Update goal's current amount
+            // Update goal's current amount + detect 25/50/75/100% milestones.
+            // Phase 10 polish: fire haptics when crossing a quarter threshold.
             var updated = goal
+            let preTier = milestoneTier(amount: goal.currentAmount, target: goal.targetAmount)
             updated.currentAmount += amount
+            let postTier = milestoneTier(amount: updated.currentAmount, target: updated.targetAmount)
+
             if updated.currentAmount >= updated.targetAmount {
+                let wasCompleted = updated.isCompleted
                 updated.isCompleted = true
-                AnalyticsManager.shared.track(.goalCompleted)
+                if !wasCompleted {
+                    AnalyticsManager.shared.track(.goalCompleted)
+                    Haptics.goalCompleted()
+                }
+            } else if postTier > preTier {
+                Haptics.goalMilestone()
             }
             AnalyticsManager.shared.track(.goalContribution)
             updated.updatedAt = Date()
@@ -195,7 +214,11 @@ class GoalManager: ObservableObject {
 
             var updated = goal
             updated.currentAmount = max(0, updated.currentAmount - withdrawAmount)
-            updated.isCompleted = false
+            // Only un-complete if the withdrawal drops balance below target.
+            // A 1¢ withdrawal from a fully-funded goal should keep it completed.
+            if updated.currentAmount < updated.targetAmount {
+                updated.isCompleted = false
+            }
             updated.updatedAt = Date()
 
             try await client.from("goals")
@@ -209,6 +232,57 @@ class GoalManager: ObservableObject {
         } catch {
             errorMessage = AppConfig.shared.safeErrorMessage(detail: error.localizedDescription)
             SecureLogger.error("Goal withdrawal failed", error)
+            return false
+        }
+    }
+
+    /// Returns 0 for <25%, 1 for 25–49%, 2 for 50–74%, 3 for 75–99%, 4 for ≥100%.
+    /// Used to detect milestone crossings on a contribution.
+    private func milestoneTier(amount: Int, target: Int) -> Int {
+        guard target > 0 else { return 0 }
+        let pct = Double(amount) / Double(target)
+        if pct >= 1.0 { return 4 }
+        if pct >= 0.75 { return 3 }
+        if pct >= 0.5 { return 2 }
+        if pct >= 0.25 { return 1 }
+        return 0
+    }
+
+    /// Soft-reverse a contribution: marks `is_reversed = true` and rolls back
+    /// the goal's denorm balance. Reversed rows remain in history for audit.
+    /// Idempotent — calling twice is a no-op.
+    func reverseContribution(_ contribution: GoalContribution, in goal: Goal) async -> Bool {
+        guard !contribution.isReversed else { return false }
+        errorMessage = nil
+
+        var reversed = contribution
+        reversed.isReversed = true
+        reversed.reversedAt = Date()
+
+        do {
+            try await client.from("goal_contributions")
+                .update(reversed)
+                .eq("id", value: contribution.id.uuidString)
+                .execute()
+
+            var updated = goal
+            updated.currentAmount = max(0, updated.currentAmount - contribution.amount)
+            if updated.currentAmount < updated.targetAmount {
+                updated.isCompleted = false
+            }
+            updated.updatedAt = Date()
+
+            try await client.from("goals")
+                .update(updated)
+                .eq("id", value: updated.id.uuidString)
+                .execute()
+
+            await fetchGoals()
+            SecureLogger.info("Goal contribution reversed")
+            return true
+        } catch {
+            errorMessage = AppConfig.shared.safeErrorMessage(detail: error.localizedDescription)
+            SecureLogger.error("Reverse contribution failed", error)
             return false
         }
     }
@@ -301,11 +375,19 @@ class GoalManager: ObservableObject {
     // MARK: - Computed
 
     var activeGoals: [Goal] {
-        goals.filter { !$0.isCompleted }
+        goals.filter { !$0.isCompleted && !$0.isArchived && $0.pausedAt == nil }
+    }
+
+    var pausedGoals: [Goal] {
+        goals.filter { $0.pausedAt != nil && !$0.isArchived }
+    }
+
+    var archivedGoals: [Goal] {
+        goals.filter { $0.isArchived }
     }
 
     var completedGoals: [Goal] {
-        goals.filter { $0.isCompleted }
+        goals.filter { $0.isCompleted && !$0.isArchived }
     }
 
     var totalSaved: Int {
@@ -330,15 +412,14 @@ class GoalManager: ObservableObject {
         }.sorted { ($0.targetDate ?? .distantFuture) < ($1.targetDate ?? .distantFuture) }
     }
 
-    /// Goals sorted by urgency (closest deadline first, then by progress)
+    /// Goals sorted by explicit user priority (desc), with deadline as tiebreaker.
+    /// Goals with priority == 0 fall back to the legacy deadline/progress order.
     var goalsByPriority: [Goal] {
         activeGoals.sorted { a, b in
-            // Goals with deadlines first
+            if a.priority != b.priority { return a.priority > b.priority }
             if a.targetDate != nil && b.targetDate == nil { return true }
             if a.targetDate == nil && b.targetDate != nil { return false }
-            // Both have deadlines: closest first
             if let ad = a.targetDate, let bd = b.targetDate { return ad < bd }
-            // Both no deadline: lowest progress first
             return a.progress < b.progress
         }
     }

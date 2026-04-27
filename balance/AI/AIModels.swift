@@ -42,7 +42,7 @@ struct AIMessage: Identifiable, Equatable {
 struct AIAction: Identifiable, Equatable, Codable {
     let id: UUID
     let type: ActionType
-    let params: ActionParams
+    var params: ActionParams
     /// User confirmation state — actions start as `.pending`.
     var status: ConfirmationStatus = .pending
 
@@ -85,13 +85,20 @@ struct AIAction: Identifiable, Equatable, Codable {
         case createGoal = "create_goal"
         case addContribution = "add_contribution"
         case updateGoal = "update_goal"
+        case pauseGoal = "pause_goal"
+        case archiveGoal = "archive_goal"
+        case withdrawFromGoal = "withdraw_from_goal"
 
         // Subscriptions
         case addSubscription = "add_subscription"
         case cancelSubscription = "cancel_subscription"
+        case pauseSubscription = "pause_subscription"
 
         // Accounts
         case updateBalance = "update_balance"
+        case addAccount = "add_account"
+        case archiveAccount = "archive_account"
+        case reconcileBalance = "reconcile_balance"
 
         // Analysis (no mutation — text-only response)
         case analyze = "analyze"
@@ -115,12 +122,15 @@ struct AIAction: Identifiable, Equatable, Codable {
             case .analyze, .compare, .forecast, .advice:
                 return .none
             case .addTransaction, .splitTransaction, .addRecurring, .addSubscription,
-                 .addContribution, .createGoal, .transfer:
+                 .addContribution, .createGoal, .transfer, .addAccount:
                 return .low
             case .setBudget, .adjustBudget, .setCategoryBudget,
-                 .updateGoal, .updateBalance, .editTransaction, .editRecurring:
+                 .updateGoal, .updateBalance, .editTransaction, .editRecurring,
+                 .pauseGoal, .archiveGoal, .reconcileBalance,
+                 .pauseSubscription:
                 return .medium
-            case .deleteTransaction, .cancelSubscription, .cancelRecurring:
+            case .deleteTransaction, .cancelSubscription, .cancelRecurring,
+                 .withdrawFromGoal, .archiveAccount:
                 return .high
             }
         }
@@ -167,6 +177,9 @@ struct AIAction: Identifiable, Equatable, Codable {
         var goalTarget: Int?           // cents
         var goalDeadline: String?      // ISO date
         var contributionAmount: Int?   // cents
+        var goalPriority: Int?         // 0–10 (used by update_goal)
+        var goalPause: Bool?           // pause_goal: true = pause, false = resume; nil → toggle
+        var goalArchive: Bool?         // archive_goal: true = archive, false = unarchive; nil → toggle
 
         // Subscription fields
         var subscriptionName: String?
@@ -176,6 +189,10 @@ struct AIAction: Identifiable, Equatable, Codable {
         // Account fields
         var accountName: String?
         var accountBalance: Int?       // cents
+        /// Account type for add_account: "cash" | "bank" | "credit_card" | "savings" | "investment" | "loan"
+        var accountType: String?
+        /// ISO currency code (e.g. "EUR"). Optional — falls back to app currency when nil.
+        var accountCurrency: String?
 
         // Transfer fields
         var fromAccount: String?       // source account name
@@ -204,6 +221,21 @@ struct AIInsight: Identifiable, Equatable {
     /// Optional action the user can take (e.g. "Set category budget")
     var suggestedAction: AIAction?
 
+    // MARK: - Phase 2 enrichment fields (ported from macOS)
+
+    /// Actionable suggestion line — short, directive ("Pause dining out until Friday").
+    /// Populated by detectors; optionally rewritten by `InsightEnricher` via LLM.
+    var advice: String?
+    /// Quantitative explanation of why the insight fired ("$412 over a 30-day average of $210").
+    var cause: String?
+    /// Auto-dismiss timestamp — refresh drops expired insights.
+    var expiresAt: Date?
+    /// Stable key for deduping across refreshes and gating dismissals.
+    /// Format: `domain:subtype[:entity]` (e.g. "subscription:unused:netflix").
+    var dedupeKey: String?
+    /// Where to route the user when they tap the insight.
+    var deeplink: Deeplink?
+
     enum InsightType: String, Equatable {
         case budgetWarning        // "budget pace ahead"
         case spendingAnomaly      // "unusual transaction"
@@ -213,17 +245,52 @@ struct AIInsight: Identifiable, Equatable {
         case goalProgress         // "you're 80% to your goal"
         case patternDetected      // "you spend most on Tuesdays"
         case morningBriefing      // daily summary
+        // Phase 2 additions
+        case cashflowRisk         // runway / income drop
+        case duplicateDetected    // duplicate transaction
+        case subscriptionAlert    // unused / hiked / duplicate subscription
+        case householdAlert       // household imbalance / unpaid share
+        case netWorthMilestone    // big drop, liability down, milestone crossed
+        case reviewQueueAlert     // backlog / blockers
     }
 
-    enum Severity: String, Equatable {
+    enum Severity: String, Equatable, Comparable {
         case info
         case warning
         case critical
         case positive
+
+        private var sortRank: Int {
+            switch self {
+            case .critical: return 0
+            case .warning:  return 1
+            case .info:     return 2
+            case .positive: return 3
+            }
+        }
+
+        static func < (lhs: Severity, rhs: Severity) -> Bool {
+            lhs.sortRank < rhs.sortRank
+        }
+    }
+
+    /// Where a tap on the insight banner should take the user.
+    enum Deeplink: String, Equatable {
+        case cashflow
+        case subscriptions
+        case recurring
+        case transactions
+        case budgets
+        case goals
+        case household
+        case netWorth
+        case reviewQueue
     }
 
     init(type: InsightType, title: String, body: String,
-         severity: Severity = .info, suggestedAction: AIAction? = nil) {
+         severity: Severity = .info, suggestedAction: AIAction? = nil,
+         advice: String? = nil, cause: String? = nil,
+         expiresAt: Date? = nil, dedupeKey: String? = nil, deeplink: Deeplink? = nil) {
         self.id = UUID()
         self.type = type
         self.title = title
@@ -231,6 +298,30 @@ struct AIInsight: Identifiable, Equatable {
         self.severity = severity
         self.timestamp = Date()
         self.suggestedAction = suggestedAction
+        self.advice = advice
+        self.cause = cause
+        self.expiresAt = expiresAt
+        self.dedupeKey = dedupeKey
+        self.deeplink = deeplink
+    }
+
+    /// macOS-compat alias — detectors emit `warning:` naming; maps to `body`.
+    var warning: String { body }
+
+    /// Copy with advice swapped — used by `InsightEnricher` to upgrade the
+    /// heuristic line without rebuilding the struct at every detector site.
+    func withAdvice(_ newAdvice: String) -> AIInsight {
+        var copy = self
+        copy.advice = newAdvice
+        return copy
+    }
+
+    /// Stable group ID for telemetry (first two segments of dedupeKey).
+    var detectorID: String {
+        guard let key = dedupeKey, !key.isEmpty else { return type.rawValue }
+        let parts = key.split(separator: ":", omittingEmptySubsequences: true)
+        if parts.count >= 2 { return "\(parts[0]):\(parts[1])" }
+        return key
     }
 }
 

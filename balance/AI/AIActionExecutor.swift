@@ -41,18 +41,18 @@ enum AIActionExecutor {
         // ── Transfers ──
 
         case .transfer:
-            return await transfer(action)
+            return await transfer(action, store: &store)
 
         // ── Recurring ──
 
-        case .addRecurring:
-            return addRecurring(action, store: &store)
-
-        case .editRecurring:
-            return editRecurring(action, store: &store)
-
-        case .cancelRecurring:
-            return cancelRecurring(action, store: &store)
+        case .addRecurring, .editRecurring, .cancelRecurring:
+            // Recurring transactions are auto-detected from transaction history.
+            // The app does not support manual add/edit/cancel via AI.
+            return ExecutionResult(
+                action: action,
+                success: false,
+                summary: "Recurring transactions are detected automatically from your history — there's nothing to add or remove manually."
+            )
 
         // ── Budget ──
 
@@ -73,6 +73,15 @@ enum AIActionExecutor {
         case .updateGoal:
             return await updateGoal(action)
 
+        case .pauseGoal:
+            return await pauseGoal(action)
+
+        case .archiveGoal:
+            return await archiveGoal(action)
+
+        case .withdrawFromGoal:
+            return await withdrawFromGoal(action)
+
         // ── Subscriptions ──
 
         case .addSubscription:
@@ -81,10 +90,22 @@ enum AIActionExecutor {
         case .cancelSubscription:
             return cancelSubscription(action)
 
+        case .pauseSubscription:
+            return pauseSubscription(action)
+
         // ── Accounts ──
 
         case .updateBalance:
             return await updateBalance(action)
+
+        case .addAccount:
+            return await addAccount(action)
+
+        case .archiveAccount:
+            return await archiveAccount(action)
+
+        case .reconcileBalance:
+            return await reconcileBalance(action)
 
         // ── Analysis (no mutation) ──
 
@@ -357,12 +378,88 @@ enum AIActionExecutor {
 
         if let target = p.goalTarget { goal.targetAmount = target }
         if let deadline = p.goalDeadline { goal.targetDate = parseISO(deadline) }
+        if let priority = p.goalPriority { goal.priority = max(0, min(10, priority)) }
         goal.updatedAt = Date()
 
         let ok = await GoalManager.shared.updateGoal(goal)
         return ExecutionResult(
             action: action, success: ok,
             summary: ok ? "Updated goal \"\(name)\"" : "Failed to update goal"
+        )
+    }
+
+    @MainActor
+    private static func pauseGoal(_ action: AIAction) async -> ExecutionResult {
+        let p = action.params
+        guard let name = p.goalName else {
+            return ExecutionResult(action: action, success: false, summary: "Missing goal name")
+        }
+        guard var goal = GoalManager.shared.goals.first(where: {
+            $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame
+        }) else {
+            return ExecutionResult(action: action, success: false, summary: "Goal \"\(name)\" not found")
+        }
+
+        // nil → toggle; true → pause; false → resume.
+        let shouldPause = p.goalPause ?? (goal.pausedAt == nil)
+        goal.pausedAt = shouldPause ? (goal.pausedAt ?? Date()) : nil
+        goal.updatedAt = Date()
+
+        let ok = await GoalManager.shared.updateGoal(goal)
+        let verb = shouldPause ? "Paused" : "Resumed"
+        return ExecutionResult(
+            action: action, success: ok,
+            summary: ok ? "\(verb) goal \"\(name)\"" : "Failed to update goal"
+        )
+    }
+
+    @MainActor
+    private static func archiveGoal(_ action: AIAction) async -> ExecutionResult {
+        let p = action.params
+        guard let name = p.goalName else {
+            return ExecutionResult(action: action, success: false, summary: "Missing goal name")
+        }
+        guard var goal = GoalManager.shared.goals.first(where: {
+            $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame
+        }) else {
+            return ExecutionResult(action: action, success: false, summary: "Goal \"\(name)\" not found")
+        }
+
+        let shouldArchive = p.goalArchive ?? !goal.isArchived
+        goal.isArchived = shouldArchive
+        goal.updatedAt = Date()
+
+        let ok = await GoalManager.shared.updateGoal(goal)
+        let verb = shouldArchive ? "Archived" : "Unarchived"
+        return ExecutionResult(
+            action: action, success: ok,
+            summary: ok ? "\(verb) goal \"\(name)\"" : "Failed to update goal"
+        )
+    }
+
+    @MainActor
+    private static func withdrawFromGoal(_ action: AIAction) async -> ExecutionResult {
+        let p = action.params
+        guard let name = p.goalName else {
+            return ExecutionResult(action: action, success: false, summary: "Missing goal name")
+        }
+        guard let amount = p.contributionAmount, amount > 0 else {
+            return ExecutionResult(action: action, success: false, summary: "Missing withdrawal amount")
+        }
+        guard let goal = GoalManager.shared.goals.first(where: {
+            $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame
+        }) else {
+            return ExecutionResult(action: action, success: false, summary: "Goal \"\(name)\" not found")
+        }
+
+        let ok = await GoalManager.shared.withdrawContribution(
+            from: goal, amount: amount, note: "Via AI assistant"
+        )
+        return ExecutionResult(
+            action: action, success: ok,
+            summary: ok
+                ? "Withdrew \(formatCents(amount)) from \"\(name)\""
+                : "Failed to withdraw"
         )
     }
 
@@ -412,6 +509,26 @@ enum AIActionExecutor {
         return ExecutionResult(action: action, success: false, summary: "Subscription \"\(name)\" not found")
     }
 
+    /// Phase 8 — pause a subscription. Mirror of `cancelSubscription` that
+    /// calls `markAsPaused` instead. Pause is reversible from the detail
+    /// view's Resume tile, so it's a softer mutation than cancel.
+    @MainActor
+    private static func pauseSubscription(_ action: AIAction) -> ExecutionResult {
+        let p = action.params
+        guard let name = p.subscriptionName else {
+            return ExecutionResult(action: action, success: false, summary: "Missing subscription name")
+        }
+
+        let engine = SubscriptionEngine.shared
+        if let sub = engine.subscriptions.first(where: {
+            $0.merchantName.localizedCaseInsensitiveCompare(name) == .orderedSame
+        }) {
+            engine.markAsPaused(sub)
+            return ExecutionResult(action: action, success: true, summary: "Paused \(name)")
+        }
+        return ExecutionResult(action: action, success: false, summary: "Subscription \"\(name)\" not found")
+    }
+
     // MARK: - Account Handlers
 
     @MainActor
@@ -436,10 +553,104 @@ enum AIActionExecutor {
         )
     }
 
+    @MainActor
+    private static func addAccount(_ action: AIAction) async -> ExecutionResult {
+        let p = action.params
+        guard let name = p.accountName?.trimmingCharacters(in: .whitespaces), !name.isEmpty else {
+            return ExecutionResult(action: action, success: false, summary: "Missing account name")
+        }
+        guard let typeRaw = p.accountType, let type = AccountType(rawValue: typeRaw) else {
+            return ExecutionResult(action: action, success: false,
+                                   summary: "Account type required (cash, bank, credit_card, savings, investment, loan)")
+        }
+        guard let uidString = AuthManager.shared.currentUser?.uid,
+              let userId = UUID(uuidString: uidString) else {
+            return ExecutionResult(action: action, success: false, summary: "Not signed in")
+        }
+
+        // Reject duplicates by name (case-insensitive) on the active list.
+        if AccountManager.shared.activeAccounts.contains(where: {
+            $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame
+        }) {
+            return ExecutionResult(action: action, success: false,
+                                   summary: "An account named \"\(name)\" already exists")
+        }
+
+        let balance = p.accountBalance.map { Double($0) / 100.0 } ?? 0
+        let currency = p.accountCurrency
+            ?? UserDefaults.standard.string(forKey: "app.currency")
+            ?? "EUR"
+
+        let account = Account(
+            name: name,
+            type: type,
+            currentBalance: balance,
+            currency: currency,
+            userId: userId
+        )
+        let ok = await AccountManager.shared.createAccount(account)
+        return ExecutionResult(
+            action: action, success: ok,
+            summary: ok ? "Added \(type.displayName) \"\(name)\"" : "Failed to add account"
+        )
+    }
+
+    @MainActor
+    private static func archiveAccount(_ action: AIAction) async -> ExecutionResult {
+        let p = action.params
+        guard let name = p.accountName else {
+            return ExecutionResult(action: action, success: false, summary: "Missing account name")
+        }
+        guard let account = AccountManager.shared.accounts.first(where: {
+            $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame
+        }) else {
+            return ExecutionResult(action: action, success: false, summary: "Account \"\(name)\" not found")
+        }
+        if account.isArchived {
+            return ExecutionResult(action: action, success: true,
+                                   summary: "\(name) is already archived")
+        }
+        let ok = await AccountManager.shared.archiveAccount(account)
+        return ExecutionResult(
+            action: action, success: ok,
+            summary: ok ? "Archived \(name) — restore from the Archived section" : "Failed to archive account"
+        )
+    }
+
+    /// Reconcile = set the balance to a known truth, but distinct from
+    /// `update_balance` so the LLM can intend "this is the real value, log
+    /// the delta as an adjustment" later. For now both paths converge on the
+    /// same write. Risk-classified medium so trust pipeline can require
+    /// confirmation even when raw balance updates are auto-approved.
+    @MainActor
+    private static func reconcileBalance(_ action: AIAction) async -> ExecutionResult {
+        let p = action.params
+        guard let name = p.accountName, let balance = p.accountBalance else {
+            return ExecutionResult(action: action, success: false, summary: "Missing account or balance")
+        }
+        guard var account = AccountManager.shared.accounts.first(where: {
+            $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame
+        }) else {
+            return ExecutionResult(action: action, success: false, summary: "Account \"\(name)\" not found")
+        }
+        let oldCents = Int((account.currentBalance * 100).rounded())
+        let delta = balance - oldCents
+        account.currentBalance = Double(balance) / 100.0
+        account.updatedAt = Date()
+        let ok = await AccountManager.shared.updateAccount(account)
+        let sign = delta >= 0 ? "+" : "−"
+        return ExecutionResult(
+            action: action, success: ok,
+            summary: ok
+                ? "Reconciled \(name) to \(formatCents(balance)) (\(sign)\(formatCents(abs(delta))))"
+                : "Failed to reconcile"
+        )
+    }
+
     // MARK: - Transfer Handler
 
     @MainActor
-    private static func transfer(_ action: AIAction) async -> ExecutionResult {
+    private static func transfer(_ action: AIAction, store: inout Store) async -> ExecutionResult {
         let p = action.params
         guard let from = p.fromAccount, let to = p.toAccount, let amount = p.amount else {
             return ExecutionResult(action: action, success: false,
@@ -447,25 +658,30 @@ enum AIActionExecutor {
         }
 
         let accounts = AccountManager.shared.accounts
-        guard var source = accounts.first(where: { $0.name.localizedCaseInsensitiveCompare(from) == .orderedSame }),
-              var dest = accounts.first(where: { $0.name.localizedCaseInsensitiveCompare(to) == .orderedSame }) else {
+        guard let source = accounts.first(where: { $0.name.localizedCaseInsensitiveCompare(from) == .orderedSame }),
+              let dest = accounts.first(where: { $0.name.localizedCaseInsensitiveCompare(to) == .orderedSame }) else {
             return ExecutionResult(action: action, success: false,
                                    summary: "One or both accounts not found")
         }
 
-        let dollars = Double(amount) / 100.0
-        source.currentBalance -= dollars
-        dest.currentBalance += dollars
-        source.updatedAt = Date()
-        dest.updatedAt = Date()
-
-        let ok1 = await AccountManager.shared.updateAccount(source)
-        let ok2 = await AccountManager.shared.updateAccount(dest)
-
-        return ExecutionResult(
-            action: action, success: ok1 && ok2,
-            summary: "Transferred \(formatCents(amount)) from \(from) to \(to)"
+        let result = await TransferService.postTransfer(
+            sourceId: source.id,
+            destinationId: dest.id,
+            amountCents: amount,
+            store: &store
         )
+        switch result {
+        case .success:
+            return ExecutionResult(
+                action: action, success: true,
+                summary: "Transferred \(formatCents(amount)) from \(from) to \(to)"
+            )
+        case .failure(let err):
+            return ExecutionResult(
+                action: action, success: false,
+                summary: err.errorDescription ?? "Transfer failed"
+            )
+        }
     }
 
     // MARK: - Recurring Handlers

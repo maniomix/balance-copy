@@ -115,10 +115,21 @@ struct AuditAction: Codable {
             return "Add \(amount) to \(p.goalName ?? "?")"
         case .updateGoal:
             return "Update goal: \(p.goalName ?? "?")"
+        case .pauseGoal:
+            let verb = (p.goalPause ?? true) ? "Pause" : "Resume"
+            return "\(verb) goal: \(p.goalName ?? "?")"
+        case .archiveGoal:
+            let verb = (p.goalArchive ?? true) ? "Archive" : "Unarchive"
+            return "\(verb) goal: \(p.goalName ?? "?")"
+        case .withdrawFromGoal:
+            let amount = p.contributionAmount.map { formatCents($0) } ?? "?"
+            return "Withdraw \(amount) from \(p.goalName ?? "?")"
         case .addSubscription:
             return "Add subscription: \(p.subscriptionName ?? "?")"
         case .cancelSubscription:
             return "Cancel: \(p.subscriptionName ?? "?")"
+        case .pauseSubscription:
+            return "Pause: \(p.subscriptionName ?? "?")"
         case .updateBalance:
             return "Update balance: \(p.accountName ?? "?")"
         case .transfer:
@@ -132,6 +143,10 @@ struct AuditAction: Codable {
             return "Cancel recurring: \(p.recurringName ?? "?")"
         case .analyze, .compare, .forecast, .advice:
             return "Analysis: \(action.type.rawValue)"
+        default:
+            // Goal lifecycle (.pauseGoal/.archiveGoal/.withdrawFromGoal) and
+            // future action types fall back to the raw enum tag.
+            return action.type.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
         }
     }
 

@@ -100,9 +100,19 @@ class AITrustManager: ObservableObject {
         let confLevel = applyConfidenceGate(base: riskLevel, confidence: confidence)
 
         // Step 7: Apply user preferences (final override)
-        let (finalLevel, prefInfluenced) = applyUserPreferences(
+        let (prefLevel, prefInfluenced) = applyUserPreferences(
             base: confLevel, action: action, risk: risk
         )
+
+        // HARD RULE: every mutating action requires explicit user confirmation.
+        // Analyses (analyze/compare/forecast/advice) are the only auto-allowed types.
+        // This supersedes mode/preference upgrades.
+        let finalLevel: AITrustLevel = {
+            if prefLevel == .auto && action.type.isMutation {
+                return .confirm
+            }
+            return prefLevel
+        }()
 
         // Build reason
         let reason = buildReason(
@@ -203,7 +213,7 @@ class AITrustManager: ObservableObject {
         let isRecurring: Bool = {
             switch action.type {
             case .addRecurring, .editRecurring, .cancelRecurring,
-                 .addSubscription, .cancelSubscription:
+                 .addSubscription, .cancelSubscription, .pauseSubscription:
                 return true
             default:
                 return false
@@ -348,8 +358,13 @@ class AITrustManager: ObservableObject {
             return .confirm
 
         // Goal changes
-        case .createGoal, .addContribution, .updateGoal:
+        case .createGoal, .addContribution, .updateGoal,
+             .pauseGoal, .archiveGoal:
             return .confirm
+
+        // Withdraw is destructive — never auto-execute even at low amounts.
+        case .withdrawFromGoal:
+            return .neverAuto
 
         // Subscription + recurring
         case .addSubscription, .addRecurring:
@@ -365,6 +380,13 @@ class AITrustManager: ObservableObject {
             return .neverAuto
         case .cancelSubscription, .cancelRecurring:
             return .confirm  // destructive but reversible-ish — confirm default
+        case .pauseSubscription:
+            return .confirm  // softer than cancel; user can Resume from detail
+
+        // Goal lifecycle ops added by Goals Rebuild — pause/archive are
+        // confirmable, withdraw is destructive enough to require neverAuto.
+        default:
+            return .confirm
         }
     }
 
@@ -508,7 +530,7 @@ class AITrustManager: ObservableObject {
         if preferences.requireConfirmRecurringSetup {
             switch action.type {
             case .addRecurring, .editRecurring, .cancelRecurring,
-                 .addSubscription, .cancelSubscription:
+                 .addSubscription, .cancelSubscription, .pauseSubscription:
                 if level == .auto {
                     level = .confirm
                     influenced = true
@@ -520,7 +542,8 @@ class AITrustManager: ObservableObject {
         // Require confirm for goal changes
         if preferences.requireConfirmGoalChanges {
             switch action.type {
-            case .createGoal, .addContribution, .updateGoal:
+            case .createGoal, .addContribution, .updateGoal,
+                 .pauseGoal, .archiveGoal, .withdrawFromGoal:
                 if level == .auto {
                     level = .confirm
                     influenced = true

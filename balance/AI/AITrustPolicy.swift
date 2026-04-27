@@ -243,7 +243,8 @@ enum AIActionGroup: String, Codable, CaseIterable, Identifiable {
         case .budgets:
             return [.setBudget, .adjustBudget, .setCategoryBudget]
         case .goals:
-            return [.createGoal, .addContribution, .updateGoal]
+            return [.createGoal, .addContribution, .updateGoal,
+                    .pauseGoal, .archiveGoal, .withdrawFromGoal]
         case .subscriptions:
             return [.addSubscription, .cancelSubscription]
         case .accounts:

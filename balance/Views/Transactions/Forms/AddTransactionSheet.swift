@@ -28,6 +28,8 @@ struct AddTransactionSheet: View {
     @StateObject private var goalManager = GoalManager.shared
     @State private var selectedGoalId: UUID? = nil
     @State private var showSaveFailedAlert = false
+    @State private var pendingAllocationProposals: [AllocationProposal] = []
+    @State private var pendingAllocationTransaction: Transaction?
 
     init(store: Binding<Store>, initialMonth: Date) {
         self._store = store
@@ -341,21 +343,15 @@ struct AddTransactionSheet: View {
             FullCategoryEditor(
                 customCategories: $store.customCategoriesWithIcons,
                 onSave: { newCategory in
-                    // 1. مستقیماً اضافه کن
+                    // 1. Append (idempotent — editor binding may have already done it)
                     if !store.customCategoriesWithIcons.contains(where: { $0.id == newCategory.id }) {
                         store.customCategoriesWithIcons.append(newCategory)
                     }
-                    
-                    // 2. Sync names
-                    if !store.customCategoryNames.contains(newCategory.name) {
-                        store.customCategoryNames.append(newCategory.name)
-                        store.customCategoryNames.sort { $0.lowercased() < $1.lowercased() }
-                    }
-                    
-                    // 3. انتخاب کن
+
+                    // 2. Select
                     category = .custom(newCategory.name)
-                    
-                    // 4. Save
+
+                    // 3. Save
                     Task {
                         try? await SupabaseManager.shared.saveStore(store)
                     }
@@ -368,18 +364,12 @@ struct AddTransactionSheet: View {
                 customCategories: $store.customCategoriesWithIcons,
                 editingCategory: customCat,
                 onSave: { category in
-                    // 1. Update
+                    // 1. Update (idempotent — editor binding may have already done it)
                     if let index = store.customCategoriesWithIcons.firstIndex(where: { $0.id == category.id }) {
                         store.customCategoriesWithIcons[index] = category
                     }
-                    
-                    // 2. Sync names
-                    if !store.customCategoryNames.contains(category.name) {
-                        store.customCategoryNames.append(category.name)
-                        store.customCategoryNames.sort { $0.lowercased() < $1.lowercased() }
-                    }
-                    
-                    // 3. Save
+
+                    // 2. Save
                     Task {
                         try? await SupabaseManager.shared.saveStore(store)
                     }
@@ -404,6 +394,18 @@ struct AddTransactionSheet: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Your transaction could not be saved. Please try again.")
+        }
+        .sheet(item: $pendingAllocationTransaction) { tx in
+            AllocationPreviewSheet(
+                transaction: tx,
+                proposals: pendingAllocationProposals,
+                onApplied: {}
+            )
+            .onDisappear {
+                pendingAllocationProposals = []
+                pendingAllocationTransaction = nil
+                dismiss()
+            }
         }
     }
     
@@ -436,6 +438,24 @@ struct AddTransactionSheet: View {
         Haptics.transactionAdded()
         AnalyticsManager.shared.track(.transactionAdded(isExpense: transactionType == .expense))
         AnalyticsManager.shared.checkFirstTransaction()
+
+        // Phase 6: surface allocation-rule proposals for income transactions.
+        // Per `feedback_confirm_every_action`: never auto-applies — user reviews.
+        if newTransaction.type == .income {
+            let alreadyAllocated = selectedGoalId != nil ? newTransaction.amount : 0
+            let proposals = AllocationRuleEngine.proposals(
+                for: newTransaction,
+                alreadyAllocated: alreadyAllocated,
+                goals: goalManager.goals,
+                in: store
+            )
+            if !proposals.isEmpty {
+                pendingAllocationProposals = proposals
+                pendingAllocationTransaction = newTransaction
+                return
+            }
+        }
+
         dismiss()
     }
 }
