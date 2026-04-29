@@ -789,6 +789,11 @@ struct SettingsView: View {
                 .padding(.bottom, 24)
             }
             .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    SectionHelpButton(screen: .settings)
+                }
+            }
             .id(refreshID)
             .sheet(isPresented: $showPaywall) {
                 // Paywall removed
@@ -843,20 +848,36 @@ struct SettingsView: View {
             .alert("Last check", isPresented: $showDeleteAccountFinal) {
                 Button("Keep my account", role: .cancel) {}
                 Button("Delete everything", role: .destructive) {
-                    // TODO: Implement actual account deletion once the new
-                    // database is in place. This should:
-                    // 1. Delete all user data from Supabase (transactions,
-                    //    budgets, categories, recurring, user profile row)
-                    // 2. Call supabase.client.auth.admin.deleteUser or an
-                    //    RPC that handles cascade deletion server-side
-                    // 3. Clear local UserDefaults + keychain
-                    // 4. Sign out and reset to launch screen
-                    SecureLogger.info("Delete account requested — not yet implemented (database migration pending)")
-                    Haptics.error()
+                    Task { await performAccountDeletion() }
                 }
             } message: {
                 Text("This can't be undone. Tap Delete everything to confirm.")
             }
+    }
+
+    /// Calls the `delete_account()` RPC which deletes auth.users → cascades
+    /// every owner_id-keyed table → wipes the user from the cloud entirely.
+    /// Then clears local caches and signs out.
+    private func performAccountDeletion() async {
+        Haptics.warning()
+        SecureLogger.info("Deleting account…")
+        do {
+            try await supabaseManager.client.rpc("delete_account").execute()
+            SecureLogger.info("Cloud data wiped via delete_account RPC")
+        } catch {
+            SecureLogger.error("delete_account RPC failed", error)
+            Haptics.error()
+            return
+        }
+
+        // Wipe local caches that survive sign-out (UserDefaults blobs).
+        AuthManager.wipeLocalUserData()
+
+        // Force sign-out to bounce the UI back to the auth screen.
+        do { try authManager.signOut() }
+        catch { SecureLogger.error("Sign-out after delete failed", error) }
+
+        Haptics.success()
     }
 
     private var userEmail: String {

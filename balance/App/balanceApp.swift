@@ -55,6 +55,12 @@ struct balanceApp: App {
                 .environmentObject(supabaseManager)
                 .environmentObject(authManager)
                 .environmentObject(appLockManager)
+                .onOpenURL { url in
+                    // OAuth (Google / Apple) redirects land here as
+                    // `centmond://auth-callback?...`. Hand off to AuthManager
+                    // which finalizes the Supabase session.
+                    authManager.handleOpenURL(url)
+                }
         }
         .modelContainer(chatContainer)
         .onChange(of: scenePhase) { _, newPhase in
@@ -64,6 +70,13 @@ struct balanceApp: App {
 
     private func handleScenePhaseChange(_ phase: ScenePhase) {
         switch phase {
+        case .active:
+            // Detect a stale session — e.g. user deleted on another device
+            // while this device was offline. Will sign out if the profile row
+            // is gone; ignores transient errors.
+            Task { await AuthManager.shared.validateSessionStillValid() }
+            BudgetLiveActivityManager.shared.endAll()
+            return
         case .background:
             // Honor the user's Settings → Dynamic Island toggle.
             guard UserDefaults.standard.object(forKey: "dynamicIsland.enabled") as? Bool ?? true else { return }
@@ -73,8 +86,6 @@ struct balanceApp: App {
             // activity has nothing useful to show.
             guard store.budget(for: store.selectedMonth) > 0 else { return }
             BudgetLiveActivityManager.shared.start(store: store)
-        case .active:
-            BudgetLiveActivityManager.shared.endAll()
         default:
             break
         }

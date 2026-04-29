@@ -1,4 +1,5 @@
 import SwiftUI
+import Flow
 
 // MARK: - Transactions
 
@@ -13,13 +14,7 @@ struct TransactionsView: View {
     @State private var search = ""
     @State private var searchScope: SearchScope = .thisMonth  // ← جدید
     @State private var showFilters = false
-    @State private var selectedCategories: Set<Category> = []
-    @State private var selectedPaymentMethods: Set<PaymentMethod> = Set(PaymentMethod.allCases)  // ← همه انتخاب شده
-    @State private var useDateRange = false
-    @State private var dateFrom = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: Date())) ?? Date()
-    @State private var dateTo = Date()
-    @State private var minAmountText = ""
-    @State private var maxAmountText = ""
+    @State private var filter = TransactionFilter()
     @State private var editingTxID: UUID? = nil
     @State private var showImport = false
     @State private var showRecurring = false  // ← دکمه Recurring
@@ -103,35 +98,7 @@ struct TransactionsView: View {
             out = out.filter { $0.note.lowercased().contains(s) || $0.category.title.lowercased().contains(s) }
         }
 
-        // Category filter — only apply when user has actively chosen a subset.
-        // Empty set means "no filter active" (show all), not "show nothing".
-        if !selectedCategories.isEmpty && selectedCategories.count != store.allCategories.count {
-            out = out.filter { selectedCategories.contains($0.category) }
-        }
-
-        // Payment method filter - فقط اگه همه انتخاب نشده باشن
-        if !selectedPaymentMethods.isEmpty && selectedPaymentMethods.count != PaymentMethod.allCases.count {
-            out = out.filter { selectedPaymentMethods.contains($0.paymentMethod) }
-        }
-
-        // Amount range filter (values are stored in euro cents)
-        let minCents = DS.Format.cents(from: minAmountText)
-        let maxCents = DS.Format.cents(from: maxAmountText)
-        if minCents > 0 {
-            out = out.filter { $0.amount >= minCents }
-        }
-        if maxCents > 0 {
-            out = out.filter { $0.amount <= maxCents }
-        }
-
-        // Date range filter
-        if useDateRange {
-            let cal = Calendar.current
-            let start = cal.startOfDay(for: dateFrom)
-            // Include the entire end day
-            let end = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: dateTo)) ?? dateTo
-            out = out.filter { $0.date >= start && $0.date < end }
-        }
+        out = filter.apply(to: out, allCategories: store.allCategories)
 
         // Apply sort order - ultra simple
         let result: [Transaction]
@@ -194,12 +161,7 @@ struct TransactionsView: View {
     }
 
     private var activeFilterCount: Int {
-        var n = 0
-        if selectedCategories.count != store.allCategories.count { n += 1 }
-        if !selectedPaymentMethods.isEmpty && selectedPaymentMethods.count != PaymentMethod.allCases.count { n += 1 }  // ← درست شد
-        if useDateRange { n += 1 }
-        if DS.Format.cents(from: minAmountText) > 0 || DS.Format.cents(from: maxAmountText) > 0 { n += 1 }
-        return n
+        filter.activeCount(allCategories: store.allCategories)
     }
 
     // --- Add state for pending delete confirmation (anchored to row)
@@ -246,23 +208,27 @@ struct TransactionsView: View {
                 .navigationDestination(isPresented: $showRecurring) {
                     RecurringTransactionsView(store: $store)
                 }
-                .onAppear {
-                    // Default: select all (including custom categories)
-                    if selectedCategories.isEmpty {
-                        selectedCategories = Set(store.allCategories)
-                    }
-                }
                 .onChange(of: store.allCategories.count) { _ in
-                    // Update selectedCategories when new categories are added
-                    selectedCategories = Set(store.allCategories)
+                    // Drop any selections that point at categories the user
+                    // just deleted, so we don't filter against ghosts.
+                    let valid = Set(store.allCategories)
+                    filter.categories = filter.categories.intersection(valid)
                 }
                 .sheet(isPresented: $showAdd) {
-                    AddTransactionSheet(store: $store, initialMonth: store.selectedMonth)
-                        .presentationDetents([.medium, .large])
-                        .presentationDragIndicator(.visible)
+                    TransactionSheet(
+                        .add(initialMonth: store.selectedMonth),
+                        in: $store,
+                        source: .manual
+                    )
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
                 }
                 .fullScreenCover(item: editingWrapper) { wrapper in
-                    EditTransactionSheet(store: $store, transactionID: wrapper.id)
+                    TransactionSheet(
+                        .edit(transactionID: wrapper.id),
+                        in: $store,
+                        source: .manual
+                    )
                 }
                 .sheet(item: Binding(
                     get: { viewingAttachment },
@@ -284,14 +250,25 @@ struct TransactionsView: View {
                 // }
                 .sheet(isPresented: $showFilters) {
                     TransactionsFilterSheet(
-                        selectedCategories: $selectedCategories,
+                        filter: $filter,
                         categories: store.allCategories,
-                        useDateRange: $useDateRange,
-                        dateFrom: $dateFrom,
-                        dateTo: $dateTo,
-                        minAmountText: $minAmountText,
-                        maxAmountText: $maxAmountText,
-                        selectedPaymentMethods: $selectedPaymentMethods
+                        previewCount: { candidate in
+                            let source = searchScope == .thisMonth
+                                ? Analytics.monthTransactions(store: store)
+                                : store.transactions
+                            return candidate.apply(
+                                to: source,
+                                allCategories: store.allCategories
+                            ).count
+                        },
+                        amountStats: {
+                            let source = searchScope == .thisMonth
+                                ? Analytics.monthTransactions(store: store)
+                                : store.transactions
+                            let amounts = source.map(\.amount).filter { $0 > 0 }
+                            guard let lo = amounts.min(), let hi = amounts.max() else { return nil }
+                            return (lo, hi)
+                        }
                     )
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
@@ -324,6 +301,137 @@ struct TransactionsView: View {
         Button("Cancel", role: .cancel) {
             showBulkDeletePopover = false
         }
+    }
+
+    // MARK: - Active Filter Chips
+
+    private struct ActiveFilterChip: Identifiable {
+        let id: String
+        let label: String
+        let remove: () -> Void
+    }
+
+    private var activeFilterChips: [ActiveFilterChip] {
+        var chips: [ActiveFilterChip] = []
+
+        if filter.isDateActive {
+            let cal = Calendar.current
+            let sameDay = cal.isDate(filter.dateFrom, inSameDayAs: filter.dateTo)
+            let f = DateFormatter()
+            f.locale = .current
+            f.setLocalizedDateFormatFromTemplate("MMM d")
+            let label = sameDay
+                ? f.string(from: filter.dateFrom)
+                : "\(f.string(from: filter.dateFrom)) – \(f.string(from: filter.dateTo))"
+            chips.append(.init(id: "date", label: label) {
+                filter.useDateRange = false
+            })
+        }
+
+        if filter.isCategoryActive(allCategories: store.allCategories) {
+            let label = filter.categories.count == 1
+                ? (filter.categories.first?.title ?? "Category")
+                : "\(filter.categories.count) categories"
+            chips.append(.init(id: "categories", label: label) {
+                filter.categories = []
+            })
+        }
+
+        if filter.isPaymentMethodActive {
+            let label = filter.paymentMethods.count == 1
+                ? (filter.paymentMethods.first?.displayName ?? "Method")
+                : "\(filter.paymentMethods.count) methods"
+            chips.append(.init(id: "paymentMethods", label: label) {
+                filter.paymentMethods = []
+            })
+        }
+
+        if filter.isAccountActive {
+            let label: String
+            if filter.accountIds.count == 1,
+               let a = AccountManager.shared.accounts.first(where: { $0.id == filter.accountIds.first }) {
+                label = a.name
+            } else {
+                label = "\(filter.accountIds.count) accounts"
+            }
+            chips.append(.init(id: "accounts", label: label) {
+                filter.accountIds = []
+            })
+        }
+
+        if filter.isAmountActive {
+            let minC = DS.Format.cents(from: filter.minAmountText)
+            let maxC = DS.Format.cents(from: filter.maxAmountText)
+            let label: String
+            switch (minC > 0, maxC > 0) {
+            case (true, true):  label = "\(DS.Format.money(minC)) – \(DS.Format.money(maxC))"
+            case (true, false): label = "≥ \(DS.Format.money(minC))"
+            case (false, true): label = "≤ \(DS.Format.money(maxC))"
+            default:            label = "Amount"
+            }
+            chips.append(.init(id: "amount", label: label) {
+                filter.minAmountText = ""
+                filter.maxAmountText = ""
+            })
+        }
+
+        return chips
+    }
+
+    private var activeFilterChipsRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(activeFilterChips) { chip in
+                    Button {
+                        showFilters = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(chip.label)
+                                .font(DS.Typography.caption)
+                                .foregroundStyle(DS.Colors.text)
+                                .lineLimit(1)
+                            Button {
+                                withAnimation(uiAnim) { chip.remove() }
+                                Haptics.selection()
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(DS.Colors.subtext)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Remove \(chip.label) filter")
+                        }
+                        .padding(.leading, 11)
+                        .padding(.trailing, 7)
+                        .padding(.vertical, 6)
+                        .background(
+                            DS.Colors.accent.opacity(0.18),
+                            in: RoundedRectangle(cornerRadius: 999, style: .continuous)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 999, style: .continuous)
+                                .strokeBorder(DS.Colors.accent.opacity(0.45), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                if activeFilterChips.count > 1 {
+                    Button {
+                        withAnimation(uiAnim) { filter.reset() }
+                        Haptics.success()
+                    } label: {
+                        Text("Clear all")
+                            .font(DS.Typography.caption)
+                            .foregroundStyle(DS.Colors.subtext)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .animation(uiAnim, value: activeFilterChips.count)
     }
 
     // MARK: - Helper Views
@@ -373,6 +481,14 @@ struct TransactionsView: View {
                     noBudgetBanner
                         .padding(.horizontal, 16)
                         .padding(.vertical, 4)
+                }
+
+                // Active filter chips row
+                if !activeFilterChips.isEmpty {
+                    activeFilterChipsRow
+                        .padding(.horizontal, 16)
+                        .padding(.top, 6)
+                        .padding(.bottom, 4)
                 }
 
                 if filtered.isEmpty {
@@ -747,7 +863,7 @@ private struct TransactionsTrailingButtons: View {
         HStack(alignment: .center, spacing: 12) {
             // Recurring button - locked for free users
             Button {
-                if SubscriptionManager.shared.isPro {
+                if MembershipManager.shared.isPro {
                     Haptics.light()
                     showRecurring = true
                 } else {
@@ -757,10 +873,10 @@ private struct TransactionsTrailingButtons: View {
                 ZStack {
                     Image(systemName: "repeat.circle")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(SubscriptionManager.shared.isPro ? DS.Colors.text : DS.Colors.subtext.opacity(0.5))
+                        .foregroundStyle(MembershipManager.shared.isPro ? DS.Colors.text : DS.Colors.subtext.opacity(0.5))
                         .frame(width: 36, height: 36, alignment: .center)
 
-                    if !SubscriptionManager.shared.isPro {
+                    if !MembershipManager.shared.isPro {
                         Image(systemName: "lock.fill")
                             .font(.system(size: 8, weight: .bold))
                             .foregroundStyle(DS.Colors.subtext)
@@ -858,18 +974,306 @@ private struct ImportTransactionsSheet: View {
 private struct TransactionsFilterSheet: View {
     @Environment(\.dismiss) private var dismiss
 
-    @Binding var selectedCategories: Set<Category>
+    @Binding var filter: TransactionFilter
     let categories: [Category]
-    @Binding var useDateRange: Bool
-    @Binding var dateFrom: Date
-    @Binding var dateTo: Date
-    @Binding var minAmountText: String
-    @Binding var maxAmountText: String
-    @Binding var selectedPaymentMethods: Set<PaymentMethod>  // ← جدید
+    let previewCount: (TransactionFilter) -> Int
+    let amountStats: () -> (minCents: Int, maxCents: Int)?
 
-    private var allSelected: Bool { selectedCategories.count == categories.count }
-    private var allPaymentMethodsSelected: Bool { selectedPaymentMethods.count == PaymentMethod.allCases.count }  // ← جدید
-    private let uiAnim = Animation.spring(response: 0.35, dampingFraction: 0.9, blendDuration: 0.0)
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @ObservedObject private var accountManager: AccountManager = .shared
+    @ObservedObject private var presetStore: SavedFilterPresetStore = .shared
+    @State private var showSavePresetAlert = false
+    @State private var pendingPresetName: String = ""
+
+    private var hasAnyActiveFilter: Bool {
+        filter.activeCount(allCategories: categories) > 0
+    }
+
+    private var availableAccounts: [Account] {
+        accountManager.accounts
+            .filter { !$0.isArchived }
+            .sorted { lhs, rhs in
+                if lhs.type.rawValue == rhs.type.rawValue {
+                    return lhs.displayOrder < rhs.displayOrder
+                }
+                return AccountType.allCases.firstIndex(of: lhs.type) ?? 0
+                    < AccountType.allCases.firstIndex(of: rhs.type) ?? 0
+            }
+    }
+
+    private enum FilterSection: Hashable { case date, categories, payment, amount }
+    @State private var expanded: Set<FilterSection> = []
+    @State private var didInitExpansion = false
+    @State private var categorySearch: String = ""
+
+    // MARK: - Date presets
+
+    private enum DatePreset: Hashable, CaseIterable {
+        case all, today, thisWeek, thisMonth, last30Days, yearToDate, custom
+
+        var label: String {
+            switch self {
+            case .all:        return "All time"
+            case .today:      return "Today"
+            case .thisWeek:   return "This week"
+            case .thisMonth:  return "This month"
+            case .last30Days: return "Last 30 days"
+            case .yearToDate: return "Year to date"
+            case .custom:     return "Custom"
+            }
+        }
+
+        // Returns nil for `.all` and `.custom` (no canonical range to apply).
+        func range(now: Date = Date()) -> (from: Date, to: Date)? {
+            let cal = Calendar.current
+            switch self {
+            case .all, .custom:
+                return nil
+            case .today:
+                let start = cal.startOfDay(for: now)
+                return (start, now)
+            case .thisWeek:
+                let comps = cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now)
+                let start = cal.date(from: comps) ?? cal.startOfDay(for: now)
+                return (start, now)
+            case .thisMonth:
+                let start = cal.date(
+                    from: cal.dateComponents([.year, .month], from: now)
+                ) ?? cal.startOfDay(for: now)
+                return (start, now)
+            case .last30Days:
+                let start = cal.date(byAdding: .day, value: -30, to: cal.startOfDay(for: now))
+                    ?? cal.startOfDay(for: now)
+                return (start, now)
+            case .yearToDate:
+                let start = cal.date(
+                    from: cal.dateComponents([.year], from: now)
+                ) ?? cal.startOfDay(for: now)
+                return (start, now)
+            }
+        }
+    }
+
+    private var currentDatePreset: DatePreset {
+        guard filter.useDateRange else { return .all }
+        let cal = Calendar.current
+        let from = cal.startOfDay(for: filter.dateFrom)
+        let to = cal.startOfDay(for: filter.dateTo)
+        for p in [DatePreset.today, .thisWeek, .thisMonth, .last30Days, .yearToDate] {
+            if let r = p.range() {
+                let rf = cal.startOfDay(for: r.from)
+                let rt = cal.startOfDay(for: r.to)
+                if rf == from && rt == to { return p }
+            }
+        }
+        return .custom
+    }
+
+    // MARK: - Amount brackets
+
+    private enum AmountBracket: Hashable, CaseIterable {
+        case under10, ten50, fifty200, over200
+
+        var minCents: Int? {
+            switch self {
+            case .under10:  return nil
+            case .ten50:    return 1000
+            case .fifty200: return 5000
+            case .over200:  return 20000
+            }
+        }
+        var maxCents: Int? {
+            switch self {
+            case .under10:  return 1000
+            case .ten50:    return 5000
+            case .fifty200: return 20000
+            case .over200:  return nil
+            }
+        }
+        var label: String {
+            switch self {
+            case .under10:  return "< \(DS.Format.money(1000))"
+            case .ten50:    return "\(DS.Format.money(1000)) – \(DS.Format.money(5000))"
+            case .fifty200: return "\(DS.Format.money(5000)) – \(DS.Format.money(20000))"
+            case .over200:  return "\(DS.Format.money(20000))+"
+            }
+        }
+    }
+
+    private var activeAmountBracket: AmountBracket? {
+        let cur = (
+            min: DS.Format.cents(from: filter.minAmountText),
+            max: DS.Format.cents(from: filter.maxAmountText)
+        )
+        for b in AmountBracket.allCases {
+            let bMin = b.minCents ?? 0
+            let bMax = b.maxCents ?? 0
+            if cur.min == bMin && cur.max == bMax { return b }
+        }
+        return nil
+    }
+
+    private func apply(_ bracket: AmountBracket) {
+        withAnimation(uiAnim) {
+            // Toggle off if already selected.
+            if activeAmountBracket == bracket {
+                filter.minAmountText = ""
+                filter.maxAmountText = ""
+            } else {
+                filter.minAmountText = bracket.minCents.map { String($0 / 100) } ?? ""
+                filter.maxAmountText = bracket.maxCents.map { String($0 / 100) } ?? ""
+            }
+        }
+        Haptics.selection()
+    }
+
+    private func apply(_ preset: DatePreset) {
+        withAnimation(uiAnim) {
+            switch preset {
+            case .all:
+                filter.useDateRange = false
+            case .custom:
+                // Switch into custom mode without overwriting the user's
+                // last picked dates.
+                filter.useDateRange = true
+            default:
+                if let r = preset.range() {
+                    filter.useDateRange = true
+                    filter.dateFrom = r.from
+                    filter.dateTo = r.to
+                }
+            }
+        }
+        Haptics.selection()
+    }
+
+    private var filteredCategories: [Category] {
+        let q = categorySearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return categories }
+        return categories.filter { $0.title.lowercased().contains(q) }
+    }
+
+    private var allSelected: Bool {
+        filter.categories.isEmpty || filter.categories.count == categories.count
+    }
+    private var allPaymentMethodsSelected: Bool {
+        filter.paymentMethods.isEmpty
+            || filter.paymentMethods.count == PaymentMethod.allCases.count
+    }
+    private var uiAnim: Animation {
+        reduceMotion
+            ? .linear(duration: 0.001)
+            : .spring(response: 0.35, dampingFraction: 0.9, blendDuration: 0.0)
+    }
+
+    private static let summaryDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = .current
+        f.setLocalizedDateFormatFromTemplate("MMM d")
+        return f
+    }()
+
+    private func summary(for section: FilterSection) -> String {
+        switch section {
+        case .date:
+            let preset = currentDatePreset
+            if preset == .custom {
+                let f = Self.summaryDateFormatter
+                return "\(f.string(from: filter.dateFrom)) – \(f.string(from: filter.dateTo))"
+            }
+            return preset.label
+        case .categories:
+            if allSelected { return "All" }
+            return "\(filter.categories.count) of \(categories.count)"
+        case .payment:
+            let pm = filter.isPaymentMethodActive
+            let acc = filter.isAccountActive
+            switch (pm, acc) {
+            case (false, false):
+                return "All"
+            case (true, false):
+                return filter.paymentMethods.count == 1
+                    ? (filter.paymentMethods.first?.displayName ?? "1")
+                    : "\(filter.paymentMethods.count) methods"
+            case (false, true):
+                return "\(filter.accountIds.count) account\(filter.accountIds.count == 1 ? "" : "s")"
+            case (true, true):
+                return "\(filter.paymentMethods.count + filter.accountIds.count) selected"
+            }
+        case .amount:
+            let hasMin = !filter.minAmountText.trimmingCharacters(in: .whitespaces).isEmpty
+            let hasMax = !filter.maxAmountText.trimmingCharacters(in: .whitespaces).isEmpty
+            switch (hasMin, hasMax) {
+            case (true, true):  return "\(filter.minAmountText) – \(filter.maxAmountText)"
+            case (true, false): return "≥ \(filter.minAmountText)"
+            case (false, true): return "≤ \(filter.maxAmountText)"
+            default:            return "Any amount"
+            }
+        }
+    }
+
+    private func isActive(_ section: FilterSection) -> Bool {
+        switch section {
+        case .date:       return filter.isDateActive
+        case .categories: return filter.isCategoryActive(allCategories: categories)
+        case .payment:    return filter.isPaymentMethodActive || filter.isAccountActive
+        case .amount:     return filter.isAmountActive
+        }
+    }
+
+    private func toggle(_ section: FilterSection) {
+        withAnimation(uiAnim) {
+            if expanded.contains(section) {
+                expanded.remove(section)
+            } else {
+                expanded.insert(section)
+            }
+        }
+        Haptics.selection()
+    }
+
+    private func sectionHeader(_ section: FilterSection, title: String) -> some View {
+        let isOpen = expanded.contains(section)
+        let active = isActive(section)
+        let summaryText = summary(for: section)
+        return Button { toggle(section) } label: {
+            HStack(spacing: 10) {
+                Text(title)
+                    .font(DS.Typography.section)
+                    .foregroundStyle(DS.Colors.text)
+                Spacer()
+                Text(summaryText)
+                    .font(DS.Typography.caption)
+                    .foregroundStyle(active ? DS.Colors.accent : DS.Colors.subtext)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.Colors.subtext)
+                    .rotationEffect(.degrees(isOpen ? 180 : 0))
+                    .animation(uiAnim, value: isOpen)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title), \(summaryText)")
+        .accessibilityHint(isOpen ? "Tap to collapse" : "Tap to expand")
+        .accessibilityAddTraits(active ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private func ensureInitialExpansion() {
+        guard !didInitExpansion else { return }
+        didInitExpansion = true
+        var seed: Set<FilterSection> = []
+        for s in [FilterSection.date, .categories, .payment, .amount] where isActive(s) {
+            seed.insert(s)
+        }
+        // If nothing is active yet, open Date by default so the sheet doesn't
+        // look empty on first launch.
+        if seed.isEmpty { seed = [.date] }
+        expanded = seed
+    }
 
     var body: some View {
         NavigationStack {
@@ -878,19 +1282,100 @@ private struct TransactionsFilterSheet: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
+                        if !presetStore.presets.isEmpty || hasAnyActiveFilter {
+                            savedPresetsRow
+                        }
+
                         DS.Card {
                             VStack(alignment: .leading, spacing: 10) {
-                                HStack {
-                                    Text("Categories")
-                                        .font(DS.Typography.section)
-                                        .foregroundStyle(DS.Colors.text)
-                                    Spacer()
+                                sectionHeader(.date, title: "Date Range")
+
+                                if expanded.contains(.date) {
+                                    let active = currentDatePreset
+                                    HFlow(spacing: 8) {
+                                        ForEach(DatePreset.allCases, id: \.self) { p in
+                                            let isOn = (p == active)
+                                            Button { apply(p) } label: {
+                                                Text(p.label)
+                                                    .font(DS.Typography.caption)
+                                                    .foregroundStyle(isOn ? DS.Colors.text : DS.Colors.subtext)
+                                                    .padding(.horizontal, 11)
+                                                    .padding(.vertical, 7)
+                                                    .background(
+                                                        (isOn ? DS.Colors.accent.opacity(0.20) : DS.Colors.surface2),
+                                                        in: RoundedRectangle(cornerRadius: 999, style: .continuous)
+                                                    )
+                                                    .overlay(
+                                                        RoundedRectangle(cornerRadius: 999, style: .continuous)
+                                                            .strokeBorder(isOn ? DS.Colors.accent.opacity(0.55) : Color.clear, lineWidth: 1)
+                                                    )
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                    }
+                                    .animation(uiAnim, value: active)
+
+                                    if active == .custom {
+                                        HStack {
+                                            VStack(alignment: .leading, spacing: 6) {
+                                                Text("From")
+                                                    .font(DS.Typography.caption)
+                                                    .foregroundStyle(DS.Colors.subtext)
+                                                DatePicker("", selection: $filter.dateFrom, displayedComponents: [.date])
+                                                    .labelsHidden()
+                                            }
+                                            Spacer()
+                                            VStack(alignment: .leading, spacing: 6) {
+                                                Text("To")
+                                                    .font(DS.Typography.caption)
+                                                    .foregroundStyle(DS.Colors.subtext)
+                                                DatePicker("", selection: $filter.dateTo, displayedComponents: [.date])
+                                                    .labelsHidden()
+                                            }
+                                        }
+                                        .transition(.opacity.combined(with: .move(edge: .top)))
+                                    }
+                                }
+                            }
+                        }
+
+                        DS.Card {
+                            VStack(alignment: .leading, spacing: 10) {
+                                sectionHeader(.categories, title: "Categories")
+
+                                if expanded.contains(.categories) {
+                                HStack(spacing: 8) {
+                                    if categories.count > 12 {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: "magnifyingglass")
+                                                .font(.system(size: 12))
+                                                .foregroundStyle(DS.Colors.subtext)
+                                            TextField("Search categories", text: $categorySearch)
+                                                .font(DS.Typography.caption)
+                                                .textInputAutocapitalization(.never)
+                                                .autocorrectionDisabled(true)
+                                            if !categorySearch.isEmpty {
+                                                Button {
+                                                    categorySearch = ""
+                                                } label: {
+                                                    Image(systemName: "xmark.circle.fill")
+                                                        .font(.system(size: 13))
+                                                        .foregroundStyle(DS.Colors.subtext)
+                                                }
+                                                .buttonStyle(.plain)
+                                            }
+                                        }
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 7)
+                                        .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    }
+                                    Spacer(minLength: 0)
                                     Button(allSelected ? "Clear" : "All") {
                                         withAnimation(uiAnim) {
                                             if allSelected {
-                                                selectedCategories = []
+                                                filter.categories = []
                                             } else {
-                                                selectedCategories = Set(categories)
+                                                filter.categories = Set(categories)
                                             }
                                         }
                                     }
@@ -899,192 +1384,225 @@ private struct TransactionsFilterSheet: View {
                                     .buttonStyle(.plain)
                                 }
 
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    HStack(spacing: 10) {
-                                        ForEach(categories, id: \.self) { c in
-                                            let isOn = selectedCategories.contains(c)
-                                            Button {
-                                                withAnimation(uiAnim) {
-                                                    if isOn {
-                                                        selectedCategories.remove(c)
-                                                    } else {
-                                                        selectedCategories.insert(c)
-                                                    }
-                                                }
-                                            } label: {
-                                                HStack(spacing: 8) {
-                                                    Image(systemName: c.icon)
-                                                    Text(c.title)
-                                                }
-                                                .font(DS.Typography.caption)
-                                                .foregroundStyle(isOn ? DS.Colors.text : DS.Colors.subtext)
-                                                .padding(.horizontal, 12)
-                                                .padding(.vertical, 9)
-                                                .background(
-                                                    (isOn ? c.tint.opacity(0.18) : DS.Colors.surface2),
-                                                    in: RoundedRectangle(cornerRadius: 999, style: .continuous)
-                                                )
-                                                .animation(uiAnim, value: selectedCategories)
-                                                .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                                            }
-                                            .buttonStyle(.plain)
-                                        }
-                                    }
-                                }
-
-                                if selectedCategories.isEmpty {
-                                    Text("Select at least one category")
-                                        .font(DS.Typography.caption)
-                                        .foregroundStyle(DS.Colors.subtext)
-                                }
-                            }
-                        }
-
-                        DS.Card {
-                            VStack(alignment: .leading, spacing: 10) {
-                                HStack {
-                                    Text("Payment Methods")
-                                        .font(DS.Typography.section)
-                                        .foregroundStyle(DS.Colors.text)
-                                    Spacer()
-                                    Button {
-                                        Haptics.selection()
-                                        withAnimation(uiAnim) {
-                                            if allPaymentMethodsSelected {
-                                                selectedPaymentMethods = []
-                                            } else {
-                                                selectedPaymentMethods = Set(PaymentMethod.allCases)
-                                            }
-                                        }
-                                    } label: {
-                                        Text(allPaymentMethodsSelected ? "Clear" : "All")
-                                            .font(DS.Typography.caption)
-                                            .foregroundStyle(DS.Colors.subtext)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-
-                                HStack(spacing: 12) {
-                                    ForEach(PaymentMethod.allCases, id: \.self) { method in
-                                        let isOn = selectedPaymentMethods.contains(method)
+                                HFlow(spacing: 8) {
+                                    ForEach(filteredCategories, id: \.self) { c in
+                                        let isOn = filter.categories.isEmpty || filter.categories.contains(c)
                                         Button {
                                             withAnimation(uiAnim) {
+                                                // If filter is currently "all" (empty),
+                                                // materialise it before removing one.
+                                                var current = filter.categories.isEmpty
+                                                    ? Set(categories)
+                                                    : filter.categories
                                                 if isOn {
-                                                    selectedPaymentMethods.remove(method)
+                                                    current.remove(c)
                                                 } else {
-                                                    selectedPaymentMethods.insert(method)
+                                                    current.insert(c)
                                                 }
-                                                Haptics.selection()
+                                                filter.categories = current
                                             }
                                         } label: {
-                                            HStack(spacing: 8) {
-                                                ZStack {
-                                                    if isOn {
-                                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                                            .fill(
-                                                                LinearGradient(
-                                                                    colors: method.gradientColors,
-                                                                    startPoint: .topLeading,
-                                                                    endPoint: .bottomTrailing
-                                                                )
-                                                            )
-                                                            .frame(width: 32, height: 32)
-                                                    } else {
-                                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                                            .fill(method.accentColor.opacity(0.12))
-                                                            .frame(width: 32, height: 32)
-                                                    }
-
-                                                    Image(systemName: method.icon)
-                                                        .font(.system(size: 16, weight: .semibold))
-                                                        .foregroundStyle(isOn ? .white : method.accentColor)
-                                                }
-
-                                                Text(method.displayName)
-                                                    .font(DS.Typography.body.weight(isOn ? .semibold : .regular))
+                                            HStack(spacing: 6) {
+                                                Image(systemName: c.icon)
+                                                    .font(.system(size: 11, weight: .semibold))
+                                                Text(c.title)
                                             }
+                                            .font(DS.Typography.caption)
                                             .foregroundStyle(isOn ? DS.Colors.text : DS.Colors.subtext)
-                                            .frame(maxWidth: .infinity)
-                                            .padding(.vertical, 12)
+                                            .padding(.horizontal, 11)
+                                            .padding(.vertical, 7)
                                             .background(
-                                                isOn ? DS.Colors.surface2 : Color.clear,
-                                                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                                (isOn ? c.tint.opacity(0.22) : DS.Colors.surface2),
+                                                in: RoundedRectangle(cornerRadius: 999, style: .continuous)
                                             )
-                                            .shadow(color: isOn ? method.accentColor.opacity(0.15) : .black.opacity(0.03), radius: 6, x: 0, y: 2)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 999, style: .continuous)
+                                                    .strokeBorder(isOn ? c.tint.opacity(0.55) : Color.clear, lineWidth: 1)
+                                            )
                                         }
                                         .buttonStyle(.plain)
                                     }
                                 }
+                                .animation(uiAnim, value: filter.categories)
+                                .animation(uiAnim, value: filteredCategories.count)
 
-                                if selectedPaymentMethods.isEmpty {
-                                    Text("Select at least one payment method")
+                                if filteredCategories.isEmpty && !categorySearch.isEmpty {
+                                    Text("No categories match \"\(categorySearch)\"")
+                                        .font(DS.Typography.caption)
+                                        .foregroundStyle(DS.Colors.subtext)
+                                        .padding(.top, 4)
+                                } else if !filter.categories.isEmpty && filter.categories.count != categories.count {
+                                    Text("\(filter.categories.count) of \(categories.count) selected")
                                         .font(DS.Typography.caption)
                                         .foregroundStyle(DS.Colors.subtext)
                                 }
+                                } // end if expanded .categories
                             }
                         }
 
                         DS.Card {
                             VStack(alignment: .leading, spacing: 10) {
-                                HStack {
-                                    Text("Date Range")
-                                        .font(DS.Typography.section)
-                                        .foregroundStyle(DS.Colors.text)
-                                    Spacer()
-                                    Toggle("", isOn: $useDateRange)
-                                        .onChange(of: useDateRange) { _, _ in
-                                            withAnimation(uiAnim) { }
-                                        }
-                                        .labelsHidden()
-                                        .toggleStyle(SwitchToggleStyle(tint: DS.Colors.accent))
-                                        .animation(uiAnim, value: useDateRange)
-                                }
-                                .padding(8)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(useDateRange ? Color.clear : DS.Colors.surface2.opacity(0.6))
-                                )
+                                sectionHeader(.payment, title: "Account")
 
-                                if useDateRange {
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 6) {
-                                            Text("From")
-                                                .font(DS.Typography.caption)
-                                                .foregroundStyle(DS.Colors.subtext)
-                                            DatePicker("", selection: $dateFrom, displayedComponents: [.date])
-                                                .labelsHidden()
+                                if expanded.contains(.payment) {
+
+                                // Quick Cash / Card pills (PaymentMethod axis)
+                                Text("Quick")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(DS.Colors.subtext)
+                                    .textCase(.uppercase)
+
+                                HFlow(spacing: 8) {
+                                    ForEach(PaymentMethod.allCases, id: \.self) { method in
+                                        let isOn = filter.paymentMethods.contains(method)
+                                        Button {
+                                            withAnimation(uiAnim) {
+                                                if isOn {
+                                                    filter.paymentMethods.remove(method)
+                                                } else {
+                                                    filter.paymentMethods.insert(method)
+                                                }
+                                            }
+                                            Haptics.selection()
+                                        } label: {
+                                            HStack(spacing: 6) {
+                                                Image(systemName: method.icon)
+                                                    .font(.system(size: 11, weight: .semibold))
+                                                Text(method.displayName)
+                                            }
+                                            .font(DS.Typography.caption)
+                                            .foregroundStyle(isOn ? DS.Colors.text : DS.Colors.subtext)
+                                            .padding(.horizontal, 11)
+                                            .padding(.vertical, 7)
+                                            .background(
+                                                (isOn ? method.accentColor.opacity(0.20) : DS.Colors.surface2),
+                                                in: RoundedRectangle(cornerRadius: 999, style: .continuous)
+                                            )
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 999, style: .continuous)
+                                                    .strokeBorder(isOn ? method.accentColor.opacity(0.55) : Color.clear, lineWidth: 1)
+                                            )
                                         }
-                                        Spacer()
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .animation(uiAnim, value: filter.paymentMethods)
+
+                                // Real-account chips, grouped by account type
+                                if !availableAccounts.isEmpty {
+                                    Text("Accounts")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(DS.Colors.subtext)
+                                        .textCase(.uppercase)
+                                        .padding(.top, 6)
+
+                                    let groups: [AccountType] = AccountType.allCases.filter { type in
+                                        availableAccounts.contains { $0.type == type }
+                                    }
+                                    ForEach(groups, id: \.self) { type in
                                         VStack(alignment: .leading, spacing: 6) {
-                                            Text("To")
+                                            Text(type.displayName)
                                                 .font(DS.Typography.caption)
                                                 .foregroundStyle(DS.Colors.subtext)
-                                            DatePicker("", selection: $dateTo, displayedComponents: [.date])
-                                                .labelsHidden()
+
+                                            HFlow(spacing: 8) {
+                                                ForEach(availableAccounts.filter { $0.type == type }) { acc in
+                                                    let isOn = filter.accountIds.contains(acc.id)
+                                                    Button {
+                                                        withAnimation(uiAnim) {
+                                                            if isOn {
+                                                                filter.accountIds.remove(acc.id)
+                                                            } else {
+                                                                filter.accountIds.insert(acc.id)
+                                                            }
+                                                        }
+                                                        Haptics.selection()
+                                                    } label: {
+                                                        HStack(spacing: 6) {
+                                                            Image(systemName: type.iconName)
+                                                                .font(.system(size: 11, weight: .semibold))
+                                                            Text(acc.name)
+                                                        }
+                                                        .font(DS.Typography.caption)
+                                                        .foregroundStyle(isOn ? DS.Colors.text : DS.Colors.subtext)
+                                                        .padding(.horizontal, 11)
+                                                        .padding(.vertical, 7)
+                                                        .background(
+                                                            (isOn ? DS.Colors.accent.opacity(0.20) : DS.Colors.surface2),
+                                                            in: RoundedRectangle(cornerRadius: 999, style: .continuous)
+                                                        )
+                                                        .overlay(
+                                                            RoundedRectangle(cornerRadius: 999, style: .continuous)
+                                                                .strokeBorder(isOn ? DS.Colors.accent.opacity(0.55) : Color.clear, lineWidth: 1)
+                                                        )
+                                                    }
+                                                    .buttonStyle(.plain)
+                                                }
+                                            }
                                         }
                                     }
-                                    .transition(.opacity.combined(with: .move(edge: .top)))
-                                } else {
-                                    Text("Date range filtering is off")
-                                        .font(DS.Typography.caption)
-                                        .foregroundStyle(DS.Colors.subtext)
-                                        .transition(.opacity)
+                                    .animation(uiAnim, value: filter.accountIds)
+
+                                    if filter.isAccountActive || filter.isPaymentMethodActive {
+                                        Button {
+                                            withAnimation(uiAnim) {
+                                                filter.paymentMethods = []
+                                                filter.accountIds = []
+                                            }
+                                            Haptics.selection()
+                                        } label: {
+                                            Text("Clear selection")
+                                                .font(DS.Typography.caption)
+                                                .foregroundStyle(DS.Colors.subtext)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .padding(.top, 4)
+                                    }
                                 }
+                                } // end if expanded .payment
                             }
                         }
 
                         DS.Card {
                             VStack(alignment: .leading, spacing: 10) {
-                                Text("Amount Range")
-                                    .font(DS.Typography.section)
-                                    .foregroundStyle(DS.Colors.text)
+                                sectionHeader(.amount, title: "Amount Range")
+
+                                if expanded.contains(.amount) {
+                                if let stats = amountStats() {
+                                    Text("Range in your data: \(DS.Format.money(stats.minCents)) – \(DS.Format.money(stats.maxCents))")
+                                        .font(DS.Typography.caption)
+                                        .foregroundStyle(DS.Colors.subtext)
+                                }
+
+                                HFlow(spacing: 8) {
+                                    ForEach(AmountBracket.allCases, id: \.self) { b in
+                                        let isOn = (activeAmountBracket == b)
+                                        Button { apply(b) } label: {
+                                            Text(b.label)
+                                                .font(DS.Typography.caption)
+                                                .foregroundStyle(isOn ? DS.Colors.text : DS.Colors.subtext)
+                                                .padding(.horizontal, 11)
+                                                .padding(.vertical, 7)
+                                                .background(
+                                                    (isOn ? DS.Colors.accent.opacity(0.20) : DS.Colors.surface2),
+                                                    in: RoundedRectangle(cornerRadius: 999, style: .continuous)
+                                                )
+                                                .overlay(
+                                                    RoundedRectangle(cornerRadius: 999, style: .continuous)
+                                                        .strokeBorder(isOn ? DS.Colors.accent.opacity(0.55) : Color.clear, lineWidth: 1)
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .animation(uiAnim, value: activeAmountBracket)
 
                                 HStack(spacing: 10) {
                                     VStack(alignment: .leading, spacing: 6) {
                                         Text("Min")
                                             .font(DS.Typography.caption)
                                             .foregroundStyle(DS.Colors.subtext)
-                                        TextField("0.00", text: $minAmountText)
+                                        TextField("0.00", text: $filter.minAmountText)
                                             .keyboardType(.decimalPad)
                                             .font(DS.Typography.number)
                                             .padding(10)
@@ -1095,49 +1613,15 @@ private struct TransactionsFilterSheet: View {
                                         Text("Max")
                                             .font(DS.Typography.caption)
                                             .foregroundStyle(DS.Colors.subtext)
-                                        TextField("0.00", text: $maxAmountText)
+                                        TextField("0.00", text: $filter.maxAmountText)
                                             .keyboardType(.decimalPad)
                                             .font(DS.Typography.number)
                                             .padding(10)
                                             .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                                     }
                                 }
-
-                                Text("Example: 0 - 100")
-                                    .font(DS.Typography.caption)
-                                    .foregroundStyle(DS.Colors.subtext)
+                                } // end if expanded .amount
                             }
-                        }
-
-                        HStack(spacing: 12) {
-                            Button {
-                                withAnimation(uiAnim) {
-                                    selectedCategories = Set(categories)
-                                    selectedPaymentMethods = Set(PaymentMethod.allCases)  // ← فیکس
-                                    useDateRange = false
-                                    dateFrom = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: Date())) ?? Date()
-                                    dateTo = Date()
-                                    minAmountText = ""
-                                    maxAmountText = ""
-                                }
-                                Haptics.success()
-                            } label: {
-                                HStack {
-                                    Image(systemName: "arrow.counterclockwise")
-                                    Text("Reset")
-                                }
-                            }
-                            .buttonStyle(DS.PrimaryButton())
-
-                            Button {
-                                dismiss()
-                            } label: {
-                                HStack {
-                                    Image(systemName: "checkmark.circle.fill")
-                                    Text("Apply")
-                                }
-                            }
-                            .buttonStyle(DS.PrimaryButton())
                         }
 
                         Spacer(minLength: 0)
@@ -1149,12 +1633,147 @@ private struct TransactionsFilterSheet: View {
             }
             .navigationTitle("Filters")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Close") { dismiss() }
-                        .foregroundStyle(DS.Colors.subtext)
+            .safeAreaInset(edge: .bottom) { stickyFooter }
+            .onAppear { ensureInitialExpansion() }
+            .alert("Save filter", isPresented: $showSavePresetAlert) {
+                TextField("Name", text: $pendingPresetName)
+                    .textInputAutocapitalization(.words)
+                Button("Save") {
+                    presetStore.add(name: pendingPresetName, filter: filter)
+                    pendingPresetName = ""
                 }
+                .disabled(pendingPresetName.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button("Cancel", role: .cancel) {
+                    pendingPresetName = ""
+                }
+            } message: {
+                Text("Pin this combination of filters so you can re-apply it in one tap.")
             }
         }
+    }
+
+    private var savedPresetsRow: some View {
+        let active = presetStore.matches(filter)
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(presetStore.presets) { preset in
+                    let isOn = (active?.id == preset.id)
+                    Button {
+                        withAnimation(uiAnim) { filter = preset.filter }
+                        Haptics.selection()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "bookmark.fill")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(preset.name)
+                                .font(DS.Typography.caption)
+                                .lineLimit(1)
+                            Button {
+                                withAnimation(uiAnim) { presetStore.remove(preset.id) }
+                                Haptics.selection()
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(DS.Colors.subtext)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Delete preset \(preset.name)")
+                        }
+                        .foregroundStyle(isOn ? DS.Colors.text : DS.Colors.subtext)
+                        .padding(.leading, 11)
+                        .padding(.trailing, 6)
+                        .padding(.vertical, 7)
+                        .background(
+                            (isOn ? DS.Colors.accent.opacity(0.22) : DS.Colors.surface2),
+                            in: RoundedRectangle(cornerRadius: 999, style: .continuous)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 999, style: .continuous)
+                                .strokeBorder(isOn ? DS.Colors.accent.opacity(0.55) : Color.clear, lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                if hasAnyActiveFilter && active == nil && presetStore.canAddMore {
+                    Button {
+                        pendingPresetName = ""
+                        showSavePresetAlert = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("Save current")
+                                .font(DS.Typography.caption)
+                        }
+                        .foregroundStyle(DS.Colors.accent)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 7)
+                        .background(
+                            DS.Colors.accent.opacity(0.10),
+                            in: RoundedRectangle(cornerRadius: 999, style: .continuous)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 999, style: .continuous)
+                                .strokeBorder(DS.Colors.accent.opacity(0.35), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+        .scrollClipDisabled()
+        .padding(.horizontal, -16)
+    }
+
+    private var stickyFooter: some View {
+        let count = previewCount(filter)
+        let hasActive = filter.activeCount(allCategories: categories) > 0
+        return HStack(spacing: 12) {
+            if hasActive {
+                Button {
+                    withAnimation(uiAnim) { filter.reset() }
+                    Haptics.success()
+                } label: {
+                    Text("Reset")
+                        .font(DS.Typography.body.weight(.semibold))
+                        .foregroundStyle(DS.Colors.subtext)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                }
+                .buttonStyle(.plain)
+                .transition(.opacity.combined(with: .move(edge: .leading)))
+            }
+
+            Spacer(minLength: 0)
+
+            Button {
+                Haptics.success()
+                dismiss()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                    Text(count == 0 ? "No matches" : "Show \(count) \(count == 1 ? "transaction" : "transactions")")
+                }
+            }
+            .buttonStyle(DS.PrimaryButton())
+            .disabled(count == 0)
+            .opacity(count == 0 ? 0.55 : 1)
+            .animation(uiAnim, value: count)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .background(
+            DS.Colors.bg
+                .overlay(alignment: .top) {
+                    Rectangle()
+                        .fill(DS.Colors.subtext.opacity(0.15))
+                        .frame(height: 1)
+                }
+                .ignoresSafeArea(edges: .bottom)
+        )
+        .animation(uiAnim, value: filter.activeCount(allCategories: categories) > 0)
     }
 }

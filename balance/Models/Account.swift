@@ -83,7 +83,7 @@ struct Account: Identifiable, Codable, Hashable {
         case isArchived = "is_archived"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
-        case userId = "user_id"
+        case userId = "owner_id"
         case displayOrder = "display_order"
         case colorTag = "color_tag"
         case includeInNetWorth = "include_in_net_worth"

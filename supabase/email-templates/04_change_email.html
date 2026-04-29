@@ -1,0 +1,54 @@
+<!--
+  SUBJECT: Confirm your new Centmond email
+  TYPE: Change Email Address
+-->
+<!-- HTML -->
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Confirm new email</title>
+</head>
+<body style="margin:0;padding:0;background:#F5F7FB;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0E1116;">
+  <span style="display:none;font-size:1px;color:#F5F7FB;">Confirm change from {{ .Email }} to {{ .NewEmail }}.</span>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FB;padding:32px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#FFFFFF;border-radius:16px;border:1px solid #E5E8EE;overflow:hidden;">
+        <tr><td style="padding:32px 32px 8px 32px;">
+          <div style="font-size:13px;font-weight:700;letter-spacing:1.2px;color:#338CFF;">CENTMOND</div>
+        </td></tr>
+        <tr><td style="padding:8px 32px 0 32px;">
+          <h1 style="margin:0;font-size:26px;font-weight:700;line-height:1.25;color:#0E1116;">Confirm your new email</h1>
+        </td></tr>
+        <tr><td style="padding:16px 32px 0 32px;">
+          <p style="margin:0;font-size:15px;line-height:1.55;color:#5A6066;">
+            You asked to change the email on your Centmond account from <strong style="color:#0E1116;">{{ .Email }}</strong> to <strong style="color:#0E1116;">{{ .NewEmail }}</strong>. Tap below to confirm.
+          </p>
+        </td></tr>
+        <tr><td style="padding:28px 32px;">
+          <table role="presentation" cellpadding="0" cellspacing="0">
+            <tr><td style="background:#338CFF;border-radius:10px;">
+              <a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:14px 28px;font-size:16px;font-weight:600;color:#FFFFFF;text-decoration:none;">Confirm new email →</a>
+            </td></tr>
+          </table>
+        </td></tr>
+        <tr><td style="padding:0 32px 24px 32px;">
+          <p style="margin:0;font-size:13px;line-height:1.55;color:#5A6066;">
+            Or paste this link into your browser:<br>
+            <a href="{{ .ConfirmationURL }}" style="color:#338CFF;word-break:break-all;">{{ .ConfirmationURL }}</a>
+          </p>
+        </td></tr>
+        <tr><td style="padding:0 32px 28px 32px;border-top:1px solid #E5E8EE;">
+          <p style="margin:20px 0 0 0;font-size:12px;line-height:1.55;color:#5A6066;">
+            Didn't request this change? Ignore the email and your address stays the same. Consider rotating your password as a precaution.
+          </p>
+        </td></tr>
+      </table>
+      <p style="margin:16px 0 0 0;font-size:12px;color:#5A6066;">
+        Centmond — your money, organized.
+      </p>
+    </td></tr>
+  </table>
+</body>
+</html>

@@ -130,6 +130,9 @@ struct GoalsOverviewView: View {
         .trackScreen("goals")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                SectionHelpButton(screen: .goals)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     showCreateGoal = true
                 } label: {

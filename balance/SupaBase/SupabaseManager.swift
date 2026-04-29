@@ -76,27 +76,11 @@ class SupabaseManager: ObservableObject {
     
     func signUp(email: String, password: String, displayName: String? = nil) async throws {
         SecureLogger.info("Starting sign up")
-
         do {
-            let response = try await client.auth.signUp(email: email, password: password)
+            let metadata: [String: AnyJSON] = displayName.map { ["display_name": .string($0)] } ?? [:]
+            _ = try await client.auth.signUp(email: email, password: password, data: metadata)
+            // Profile row is created by the `handle_new_user` Postgres trigger.
             SecureLogger.info("Auth sign up successful")
-
-            // Create user profile
-            let userId = response.user.id.uuidString
-
-            let userData: [String: String] = [
-                "id": userId,
-                "email": email,
-                "display_name": displayName ?? "User"
-            ]
-
-            try await client.database
-                .from("users")
-                .insert(userData)
-                .execute()
-
-            SecureLogger.info("User profile created")
-
         } catch {
             SecureLogger.error("Sign up failed", error)
             throw error
@@ -145,7 +129,9 @@ class SupabaseManager: ObservableObject {
         let budgets = try await loadBudgets(userId: userId)
         let categoryBudgets = try await loadCategoryBudgets(userId: userId)
         let customCategories = try await loadCustomCategories(userId: userId)
-        let recurringTransactions = try await loadRecurringTransactions(userId: userId)
+        // Recurring is derived from transactions at runtime — preserve whatever
+        // RecurringDetector already produced locally; no cloud round-trip.
+        let recurringTransactions = localStore.recurringTransactions
         
         // Merge strategy for budgets:
         //   Cloud is authoritative. Local values are only preserved as a
@@ -217,77 +203,10 @@ class SupabaseManager: ObservableObject {
             try await saveTransaction(transaction, userId: userId)
         }
         
-        // 3. Save budgets + delete removed months from server
-        let localBudgetMonths = Set(store.budgetsByMonth.keys)
-        
-        // Load server budget months
-        struct BudgetMonthDTO: Codable { let month: String }
-        let serverBudgets: [BudgetMonthDTO] = try await client.database
-            .from("budgets")
-            .select("month")
-            .eq("user_id", value: userId.lowercased())
-            .execute()
-            .value
-        
-        // Delete budgets that exist on server but not locally
-        for sb in serverBudgets {
-            if !localBudgetMonths.contains(sb.month) {
-                SecureLogger.debug("Deleting budget and category budgets for month")
-                try await client.database
-                    .from("budgets")
-                    .delete()
-                    .eq("user_id", value: userId.lowercased())
-                    .eq("month", value: sb.month)
-                    .execute()
+        // 3+4. Budgets — delegated to BudgetManager (handles delete-missing + upsert).
+        try await BudgetManager.shared.syncMonthlyTotals(store.budgetsByMonth)
+        try await BudgetManager.shared.syncCategoryBudgets(store.categoryBudgetsByMonth)
 
-                // Also delete all category budgets for that month
-                try await client.database
-                    .from("category_budgets")
-                    .delete()
-                    .eq("user_id", value: userId.lowercased())
-                    .eq("month", value: sb.month)
-                    .execute()
-            }
-        }
-        
-        for (monthKey, amount) in store.budgetsByMonth {
-            if let month = monthKeyToDate(monthKey) {
-                try await saveBudget(userId: userId, month: month, amount: amount)
-            }
-        }
-        
-        // 4. Save category budgets + clean removed ones
-        let localCatBudgetMonths = Set(store.categoryBudgetsByMonth.keys)
-        
-        for (monthKey, categoriesDict) in store.categoryBudgetsByMonth {
-            if let month = monthKeyToDate(monthKey) {
-                for (categoryKey, amount) in categoriesDict {
-                    try await saveCategoryBudget(userId: userId, month: month, category: categoryKey, amount: amount)
-                }
-            }
-        }
-        
-        // Delete category budgets for months not in local
-        struct CatBudgetMonthDTO: Codable { let month: String }
-        let serverCatBudgets: [CatBudgetMonthDTO] = try await client.database
-            .from("category_budgets")
-            .select("month")
-            .eq("user_id", value: userId.lowercased())
-            .execute()
-            .value
-        
-        let serverCatMonths = Set(serverCatBudgets.map { $0.month })
-        for month in serverCatMonths {
-            if !localCatBudgetMonths.contains(month) {
-                try await client.database
-                    .from("category_budgets")
-                    .delete()
-                    .eq("user_id", value: userId.lowercased())
-                    .eq("month", value: month)
-                    .execute()
-            }
-        }
-        
         // 5. Save custom categories
         try await saveCustomCategories(store.customCategoriesWithIcons, userId: userId)
         
@@ -297,267 +216,204 @@ class SupabaseManager: ObservableObject {
         SecureLogger.info("Store saved")
     }
     
-    // MARK: - Transactions
-    
-    func saveTransaction(_ transaction: Transaction, userId: String) async throws {
-        let dateFormatter = ISO8601DateFormatter()
-        
-        let data: [String: String] = [
-            "id": transaction.id.uuidString,
-            "user_id": userId.lowercased(),
-            "amount": String(transaction.amount),
-            "category": transaction.category.storageKey,
-            "type": transaction.type == .income ? "income" : "expense",
-            "note": transaction.note,
-            "date": dateFormatter.string(from: transaction.date)
-        ]
-        
-        try await client.database
-            .from("transactions")
-            .upsert(data)
-            .execute()
-    }
-    
-    func loadTransactions(userId: String) async throws -> [Transaction] {
-        // ⚠️ Important: Supabase stores UUIDs in lowercase, but Swift returns uppercase
-        let userIdLowercase = userId.lowercased()
-        
-        struct TransactionDTO: Codable {
-            let id: String
-            let amount: Int
-            let category: String
-            let type: String
-            let note: String?
-            let date: String
-        }
-        
-        SecureLogger.debug("Loading transactions")
+    // MARK: - Transactions  (delegated to TransactionRepository — Phase 5.3)
 
-        let response: [TransactionDTO] = try await client.database
-            .from("transactions")
-            .select()
-            .eq("user_id", value: userIdLowercase)
-            .order("date", ascending: false)
-            .execute()
-            .value
-        
-        SecureLogger.debug("Received \(response.count) transactions")
-        
-        var parsedCount = 0
-        var failedCount = 0
-        
-        let transactions = response.compactMap { dto -> Transaction? in
-            guard let uuid = UUID(uuidString: dto.id) else {
-                failedCount += 1
-                SecureLogger.error("Failed to parse UUID")
-                return nil
-            }
-            
-            // Parse date - handle both "YYYY-MM-DD" and ISO8601 formats
-            let date: Date
-            if let isoDate = ISO8601DateFormatter().date(from: dto.date) {
-                date = isoDate
-            } else {
-                // Try simple date format "YYYY-MM-DD"
-                let formatter = DateFormatter()
-                formatter.dateFormat = "yyyy-MM-dd"
-                formatter.locale = Locale(identifier: "en_US_POSIX")
-                formatter.timeZone = TimeZone(secondsFromGMT: 0)
-                
-                if let simpleDate = formatter.date(from: dto.date) {
-                    date = simpleDate
-                } else {
-                    failedCount += 1
-                    SecureLogger.error("Failed to parse date")
-                    return nil
-                }
-            }
-            
-            // Parse category from storage key
-            let category: Category
-            if dto.category.hasPrefix("custom:") {
-                let customName = String(dto.category.dropFirst(7))
-                category = .custom(customName)
-            } else {
-                switch dto.category {
-                case "groceries": category = .groceries
-                case "rent": category = .rent
-                case "bills": category = .bills
-                case "transport": category = .transport
-                case "health": category = .health
-                case "education": category = .education
-                case "dining": category = .dining
-                case "shopping": category = .shopping
-                default: category = .other
-                }
-            }
-            
-            parsedCount += 1
-            
-            return Transaction(
-                id: uuid,
-                amount: dto.amount,
-                date: date,
-                category: category,
-                note: dto.note ?? "",
-                type: dto.type == "income" ? .income : .expense
-            )
-        }
-        
-        SecureLogger.info("Successfully parsed \(parsedCount) transactions")
-        if failedCount > 0 {
-            SecureLogger.warning("Failed to parse \(failedCount) transactions")
-        }
-        
-        return transactions
+    func saveTransaction(_ transaction: Transaction, userId: String) async throws {
+        try await TransactionRepository.shared.upsert(transaction)
     }
-    
+
+    func loadTransactions(userId: String) async throws -> [Transaction] {
+        SecureLogger.debug("Loading transactions")
+        let txs = try await TransactionRepository.shared.fetchAll()
+        SecureLogger.info("Loaded \(txs.count) transactions")
+        return txs
+    }
+
     func deleteTransaction(_ transactionId: UUID) async throws {
-        guard let userId = currentUser?.id.uuidString.lowercased() else {
+        guard currentUser != nil else {
             SecureLogger.warning("deleteTransaction: No authenticated user")
             throw NSError(domain: "SupabaseManager", code: 401, userInfo: [NSLocalizedDescriptionKey: "Not authenticated"])
         }
+        try await TransactionRepository.shared.delete(id: transactionId)
+    }
+    
+    // MARK: - Budgets  (delegated to BudgetManager — Phase 5.4)
 
-        try await client.database
-            .from("transactions")
-            .delete()
-            .eq("id", value: transactionId.uuidString.lowercased())
-            .eq("user_id", value: userId)
-            .execute()
-    }
-    
-    // MARK: - Budgets
-    
     func saveBudget(userId: String, month: Date, amount: Int) async throws {
-        let monthStr = dateToMonthKey(month)
-        
-        let data: [String: String] = [
-            "user_id": userId.lowercased(),
-            "month": monthStr,
-            "total_amount": String(amount)
-        ]
-        
-        try await client.database
-            .from("budgets")
-            .upsert(data, onConflict: "user_id,month")
-            .execute()
+        let key = dateToMonthKey(month)
+        try await BudgetManager.shared.syncMonthlyTotals([key: amount])
     }
-    
+
     func loadBudgets(userId: String) async throws -> [String: Int] {
-        struct BudgetDTO: Codable {
-            let month: String
-            let total_amount: Int
-        }
-        
-        let response: [BudgetDTO] = try await client.database
-            .from("budgets")
-            .select()
-            .eq("user_id", value: userId.lowercased())
-            .execute()
-            .value
-        
-        var budgets: [String: Int] = [:]
-        for budget in response {
-            budgets[budget.month] = budget.total_amount
-        }
-        return budgets
+        try await BudgetManager.shared.fetchMonthlyTotals()
     }
-    
-    // MARK: - Category Budgets
-    
+
     func saveCategoryBudget(userId: String, month: Date, category: String, amount: Int) async throws {
-        let monthStr = dateToMonthKey(month)
-        
-        let data: [String: String] = [
-            "user_id": userId.lowercased(),
-            "month": monthStr,
-            "category": category,
-            "amount": String(amount)
-        ]
-        
-        try await client.database
-            .from("category_budgets")
-            .upsert(data, onConflict: "user_id,month,category")
-            .execute()
-    }
-    
-    func loadCategoryBudgets(userId: String) async throws -> [String: [String: Int]] {
-        struct CategoryBudgetDTO: Codable {
+        let key = dateToMonthKey(month)
+        // Single-row variant — caller flow uses the bulk path now.
+        struct UpsertRow: Encodable {
             let month: String
-            let category: String
+            let category_key: String
             let amount: Int
         }
-        
-        let response: [CategoryBudgetDTO] = try await client.database
-            .from("category_budgets")
-            .select()
-            .eq("user_id", value: userId.lowercased())
+        try await client
+            .from("monthly_category_budgets")
+            .upsert(UpsertRow(month: key, category_key: category, amount: amount),
+                    onConflict: "owner_id,month,category_key")
             .execute()
-            .value
-        
-        var budgets: [String: [String: Int]] = [:]
-        for budget in response {
-            if budgets[budget.month] == nil {
-                budgets[budget.month] = [:]
-            }
-            budgets[budget.month]?[budget.category] = budget.amount
-        }
-        return budgets
+    }
+
+
+    func loadCategoryBudgets(userId: String) async throws -> [String: [String: Int]] {
+        try await BudgetManager.shared.fetchCategoryBudgets()
     }
     
-    // MARK: - Real-time Sync
-    
+    // MARK: - Real-time Sync (Phase 6)
+    //
+    // Opens one channel and one postgresChange stream per cross-device-
+    // relevant table. RLS scopes events to the current user automatically,
+    // so each device only receives its own changes.
+    //
+    // The `onUpdate` callback is debounced (1.5s) and fired once after a
+    // burst of events — ContentView reacts by pulling from cloud, which
+    // refreshes the in-memory store + the JSONB-blob syncs (AI / subs /
+    // household / filter presets).
+
     private var realtimeChannel: RealtimeChannelV2?
-    
+    private var realtimeStreamTasks: [Task<Void, Never>] = []
+    private var realtimeDebounce: Task<Void, Never>?
+
+    private static let realtimeWatchedTables: [String] = [
+        "transactions", "monthly_budgets", "monthly_category_budgets",
+        "goals", "goal_contributions", "categories", "accounts", "profiles",
+        "subscription_state", "household_state",
+        "ai_memory", "ai_chat_sessions", "ai_chat_messages",
+        "saved_filter_presets"
+    ]
+
     func startRealtimeSync(userId: String, onUpdate: @escaping () -> Void) {
-        SecureLogger.debug("Real-time sync disabled for now")
-        // TODO: Implement real-time sync properly
-    }
-    
-    func stopRealtimeSync() {
-        SecureLogger.debug("Stopping real-time sync")
-        realtimeChannel = nil
-    }
-    
-    // MARK: - Analytics
-    
-    func trackEvent(name: String, properties: [String: Any]? = nil) async {
-        guard let userId = currentUser?.id.uuidString else { return }
-        
-        do {
-            // Convert properties to JSON string
-            var propsJson = "{}"
-            if let properties = properties {
-                let stringProps = properties.mapValues { "\($0)" }
-                if let jsonData = try? JSONSerialization.data(withJSONObject: stringProps),
-                   let jsonString = String(data: jsonData, encoding: .utf8) {
-                    propsJson = jsonString
+        guard realtimeChannel == nil else { return }   // already running
+        let channelName = "centmond-\(userId)"
+        let channel = client.channel(channelName)
+        self.realtimeChannel = channel
+
+        for table in Self.realtimeWatchedTables {
+            let stream = channel.postgresChange(
+                AnyAction.self, schema: "public", table: table
+            )
+            let task = Task { [weak self] in
+                for await _ in stream {
+                    await MainActor.run { self?.scheduleRealtimeRefresh(onUpdate: onUpdate) }
                 }
             }
-            
-            let data: [String: String] = [
-                "user_id": userId.lowercased(),
-                "event_name": name,
-                "event_properties": propsJson
-            ]
-            
-            try await client.database
-                .from("events")
-                .insert(data)
-                .execute()
-        } catch {
-            SecureLogger.warning("Failed to track event")
+            realtimeStreamTasks.append(task)
+        }
+
+        Task { await channel.subscribe() }
+        SecureLogger.info("Realtime: subscribed to \(Self.realtimeWatchedTables.count) tables")
+    }
+
+    func stopRealtimeSync() {
+        realtimeDebounce?.cancel()
+        for t in realtimeStreamTasks { t.cancel() }
+        realtimeStreamTasks.removeAll()
+        if let channel = realtimeChannel {
+            Task { await channel.unsubscribe() }
+        }
+        realtimeChannel = nil
+        SecureLogger.debug("Realtime: stopped")
+    }
+
+    private func scheduleRealtimeRefresh(onUpdate: @escaping () -> Void) {
+        realtimeDebounce?.cancel()
+        realtimeDebounce = Task { @MainActor [weak self] in
+            // 2.5 s — slightly longer than ContentView's 2 s save debounce,
+            // so a fresh local edit gets uploaded before the realtime pull
+            // overwrites it. Combined with `fullReconcile` (push-then-pull)
+            // in the callback, this closes the most common data-loss race.
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            guard !Task.isCancelled else { return }
+            // Pull blob-state syncs in parallel before the store refresh.
+            await SubscriptionStateSync.pull()
+            await SavedFilterPresetSync.pull()
+            await AIStateSync.pull()
+            // Caller (ContentView) re-pulls store via SyncCoordinator.
+            onUpdate()
+            _ = self
         }
     }
     
+    // MARK: - Analytics  (Phase 5.10 — writes to public.app_events)
+
+    func trackEvent(name: String, properties: [String: Any]? = nil) async {
+        // owner_id auto-fills via fill_owner_id trigger; anon events still land
+        // with null owner_id when no user is signed in.
+        struct InsertRow: Encodable {
+            let event_name: String
+            let properties: AnyJSONValue
+            let device_id: String?
+        }
+        // Stringify property values so AnyJSONValue stays a flat object map
+        // — keeps server-side queries simple (no nested numbers vs strings).
+        let propsObject: [String: AnyJSONValue] = (properties ?? [:])
+            .reduce(into: [:]) { $0[$1.key] = .string("\($1.value)") }
+
+        let row = InsertRow(
+            event_name: name,
+            properties: .object(propsObject),
+            device_id: Self.deviceId
+        )
+        do {
+            try await client
+                .from("app_events")
+                .insert(row)
+                .execute()
+        } catch {
+            SecureLogger.warning("Failed to track event: \(name)")
+        }
+    }
+
+    /// Stable per-install device identifier (UUID kept in UserDefaults).
+    /// Used for analytics + device_sessions joins.
+    private static let deviceId: String = {
+        let key = "centmond.deviceId"
+        if let existing = UserDefaults.standard.string(forKey: key) { return existing }
+        let id = UUID().uuidString
+        UserDefaults.standard.set(id, forKey: key)
+        return id
+    }()
+
+    /// Heartbeat into `device_sessions` so the dashboard / admin web can show
+    /// "last seen" per device. Idempotent — upserts on (owner_id, device_id).
     func updateLastActive() async throws {
-        guard let userId = currentUser?.id.uuidString else { return }
-        
-        try await client.database
-            .from("users")
-            .update(["last_active_at": ISO8601DateFormatter().string(from: Date())])
-            .eq("id", value: userId)
+        guard currentUser != nil else { return }
+        struct Row: Encodable {
+            let device_id: String
+            let platform: String
+            let device_name: String?
+            let app_version: String?
+            let last_seen_at: String
+        }
+        let now = ISO8601DateFormatter().string(from: Date())
+        let row = Row(
+            device_id: Self.deviceId,
+            platform: "ios",
+            device_name: deviceName,
+            app_version: AppConfig.shared.appVersion,
+            last_seen_at: now
+        )
+        try await client
+            .from("device_sessions")
+            .upsert(row, onConflict: "owner_id,device_id")
             .execute()
+    }
+
+    private var deviceName: String? {
+        #if os(iOS)
+        return UIDevice.current.name
+        #else
+        return Host.current().localizedName
+        #endif
     }
     
     // MARK: - Delete Month Data
@@ -565,48 +421,30 @@ class SupabaseManager: ObservableObject {
     /// حذف کامل داده‌های یک ماه از Supabase
     /// شامل: transactions, budgets, category_budgets
     func deleteMonthData(userId: String, monthKey: String) async throws {
-        // Validate the caller's userId matches the authenticated user
         guard let currentId = currentUser?.id.uuidString.lowercased(),
               userId.lowercased() == currentId else {
             SecureLogger.security("deleteMonthData: userId mismatch with authenticated user")
             throw NSError(domain: "SupabaseManager", code: 403, userInfo: [NSLocalizedDescriptionKey: "Permission denied"])
         }
 
-        let userIdLower = userId.lowercased()
+        SecureLogger.debug("Deleting month data from Supabase: \(monthKey)")
 
-        SecureLogger.debug("Deleting month data from Supabase")
-        
-        // 1. حذف تراکنش‌های این ماه
-        // date ها به فرمت ISO8601 هستن: "2026-03-15T..." پس با like فیلتر میکنیم
-        // هم فرمت ISO8601 و هم YYYY-MM-DD رو ساپورت میکنه
-        try await client.database
+        // 1. Transactions in [start, nextMonthStart)
+        guard let monthStart = monthKeyToDate(monthKey),
+              let monthEnd = Calendar.current.date(byAdding: .month, value: 1, to: monthStart) else {
+            throw NSError(domain: "SupabaseManager", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid month key"])
+        }
+        let iso = ISO8601DateFormatter()
+        try await client
             .from("transactions")
             .delete()
-            .eq("user_id", value: userIdLower)
-            .like("date", pattern: "\(monthKey)%")
+            .gte("occurred_at", value: iso.string(from: monthStart))
+            .lt("occurred_at", value: iso.string(from: monthEnd))
             .execute()
 
-        SecureLogger.info("Deleted transactions")
-        
-        // 2. حذف بودجه کل این ماه
-        try await client.database
-            .from("budgets")
-            .delete()
-            .eq("user_id", value: userIdLower)
-            .eq("month", value: monthKey)
-            .execute()
+        // 2+3. Budgets via the manager (handles both monthly_budgets and monthly_category_budgets).
+        try await BudgetManager.shared.deleteMonth(monthKey)
 
-        SecureLogger.info("Deleted budget")
-        
-        // 3. حذف category budgets این ماه
-        try await client.database
-            .from("category_budgets")
-            .delete()
-            .eq("user_id", value: userIdLower)
-            .eq("month", value: monthKey)
-            .execute()
-
-        SecureLogger.info("Deleted category budgets")
         SecureLogger.info("Month data fully deleted")
     }
     
@@ -626,255 +464,45 @@ class SupabaseManager: ObservableObject {
 }
 
 // MARK: - Recurring Transactions
+//
+// Per the locked rebuild decision, recurring transactions are **derived
+// from transaction history** at runtime by `RecurringDetector` — there is
+// no `recurring_transactions` table in the new schema. These two methods
+// are kept so the existing `syncStore` / `saveStore` call sites compile,
+// but they're no-ops. Local `Store.recurringTransactions` survives via
+// the regular Store JSON snapshot in UserDefaults.
 extension SupabaseManager {
-    
+
     func saveRecurringTransactions(_ recurring: [RecurringTransaction], userId: String) async throws {
-        let userIdLower = userId.lowercased()
-        let dateFormatter = ISO8601DateFormatter()
-        
-        SecureLogger.debug("Saving \(recurring.count) recurring transactions")
-        
-        // Get existing IDs from server
-        struct IdDTO: Codable { let id: String }
-        let existing: [IdDTO] = try await client.database
-            .from("recurring_transactions")
-            .select("id")
-            .eq("user_id", value: userIdLower)
-            .execute()
-            .value
-        
-        let existingIds = Set(existing.map { $0.id.lowercased() })
-        let localIds = Set(recurring.map { $0.id.uuidString.lowercased() })
-        
-        // Hard delete ones that exist on server but not locally
-        let deletedIds = existingIds.subtracting(localIds)
-        for deletedId in deletedIds {
-            try await client.database
-                .from("recurring_transactions")
-                .delete()
-                .eq("id", value: deletedId)
-                .execute()
-        }
-        
-        // Upsert all local recurring
-        for item in recurring {
-            var data: [String: String] = [
-                "id": item.id.uuidString.lowercased(),
-                "user_id": userIdLower,
-                "name": item.name,
-                "amount": String(item.amount),
-                "category": item.category.storageKey,
-                "frequency": item.frequency.rawValue,
-                "start_date": dateFormatter.string(from: item.startDate),
-                "is_active": item.isActive ? "true" : "false",
-                "payment_method": item.paymentMethod.rawValue,
-                "note": item.note
-            ]
-            
-            if let endDate = item.endDate {
-                data["end_date"] = dateFormatter.string(from: endDate)
-            }
-            
-            if let lastProcessed = item.lastProcessedDate {
-                data["last_processed_date"] = dateFormatter.string(from: lastProcessed)
-            }
-            
-            try await client.database
-                .from("recurring_transactions")
-                .upsert(data)
-                .execute()
-        }
-        
-        SecureLogger.info("Recurring transactions saved (\(recurring.count) upserted, \(deletedIds.count) deleted)")
+        // No-op: recurring is derived, not persisted.
     }
-    
+
     func loadRecurringTransactions(userId: String) async throws -> [RecurringTransaction] {
-        let userIdLower = userId.lowercased()
-        
-        struct RecurringDTO: Codable {
-            let id: String
-            let name: String
-            let amount: Int
-            let category: String
-            let frequency: String
-            let start_date: String
-            let end_date: String?
-            let is_active: Bool
-            let last_processed_date: String?
-            let payment_method: String?
-            let note: String?
-        }
-        
-        SecureLogger.debug("Loading recurring transactions")
-        
-        let response: [RecurringDTO] = try await client.database
-            .from("recurring_transactions")
-            .select()
-            .eq("user_id", value: userIdLower)
-            .execute()
-            .value
-        
-        let isoFormatter = ISO8601DateFormatter()
-        let simpleFormatter = DateFormatter()
-        simpleFormatter.dateFormat = "yyyy-MM-dd"
-        simpleFormatter.locale = Locale(identifier: "en_US_POSIX")
-        simpleFormatter.timeZone = TimeZone(secondsFromGMT: 0)
-        
-        func parseDate(_ str: String) -> Date? {
-            isoFormatter.date(from: str) ?? simpleFormatter.date(from: str)
-        }
-        
-        func parseCategory(_ key: String) -> Category {
-            if key.hasPrefix("custom:") {
-                return .custom(String(key.dropFirst(7)))
-            }
-            switch key {
-            case "groceries": return .groceries
-            case "rent": return .rent
-            case "bills": return .bills
-            case "transport": return .transport
-            case "health": return .health
-            case "education": return .education
-            case "dining": return .dining
-            case "shopping": return .shopping
-            default: return .other
-            }
-        }
-        
-        func parseFrequency(_ raw: String) -> RecurringFrequency {
-            switch raw {
-            case "daily": return .daily
-            case "weekly": return .weekly
-            case "monthly": return .monthly
-            case "yearly": return .yearly
-            default: return .monthly
-            }
-        }
-        
-        func parsePaymentMethod(_ raw: String?) -> PaymentMethod {
-            guard let raw = raw else { return .card }
-            return PaymentMethod(rawValue: raw) ?? .card
-        }
-        
-        let results = response.compactMap { dto -> RecurringTransaction? in
-            guard let uuid = UUID(uuidString: dto.id),
-                  let startDate = parseDate(dto.start_date) else {
-                SecureLogger.error("Failed to parse recurring transaction")
-                return nil
-            }
-            
-            return RecurringTransaction(
-                id: uuid,
-                name: dto.name,
-                amount: dto.amount,
-                category: parseCategory(dto.category),
-                frequency: parseFrequency(dto.frequency),
-                startDate: startDate,
-                endDate: dto.end_date.flatMap { parseDate($0) },
-                isActive: dto.is_active,
-                lastProcessedDate: dto.last_processed_date.flatMap { parseDate($0) },
-                paymentMethod: parsePaymentMethod(dto.payment_method),
-                note: dto.note ?? ""
-            )
-        }
-        
-        SecureLogger.info("Loaded \(results.count) recurring transactions")
-        return results
+        // No-op: recurring is derived, not persisted. Caller's local store
+        // already holds the locally-detected list.
+        return []
     }
 }
 
 // MARK: - Custom Categories
 extension SupabaseManager {
     
-    /// Save custom categories to Supabase
+    /// Save custom categories to Supabase. Delegates to `CategoryManager`,
+    /// which reconciles the rows in `public.categories` (is_custom = true).
     func saveCustomCategories(_ categories: [CustomCategoryModel], userId: String) async throws {
         SecureLogger.debug("Saving \(categories.count) custom categories")
-
-        let jsonData = try JSONEncoder().encode(categories)
-        let jsonString = String(data: jsonData, encoding: .utf8) ?? "[]"
-        
-        try await client
-            .from("users")
-            .update(["custom_categories": jsonString])
-            .eq("id", value: userId)
-            .execute()
-
+        try await CategoryManager.shared.sync(categories)
         SecureLogger.info("Custom categories saved")
-
-        // Verify it was saved
-        let categories = try await loadCustomCategories(userId: userId)
-        SecureLogger.debug("Verified: \(categories.count) categories in database")
     }
-    
-    /// Load custom categories from Supabase
+
+    /// Load custom categories from Supabase via `CategoryManager`.
+    /// `userId` parameter is unused (RLS scopes the query to auth.uid()) but
+    /// kept so the caller signature stays stable.
     func loadCustomCategories(userId: String) async throws -> [CustomCategoryModel] {
         SecureLogger.debug("Loading custom categories")
-        
-        // Try decoding as array first (if JSONB native)
-        struct UserDataArray: Decodable {
-            let custom_categories: [CustomCategoryModel]?
-        }
-        
-        // Fallback: decode as string (if stored as JSON string)
-        struct UserDataString: Decodable {
-            let custom_categories: String?
-        }
-        
-        do {
-            // Try array format first
-            let response: [UserDataArray] = try await client
-                .from("users")
-                .select("custom_categories")
-                .eq("id", value: userId)
-                .execute()
-                .value
-
-            if let user = response.first,
-               let categories = user.custom_categories {
-                SecureLogger.info("Loaded \(categories.count) custom categories (array format)")
-                return categories
-            }
-        } catch {
-            SecureLogger.debug("Not array format, trying string format")
-            
-            // Try string format
-            do {
-                let response: [UserDataString] = try await client
-                    .from("users")
-                    .select("custom_categories")
-                    .eq("id", value: userId)
-                    .execute()
-                    .value
-
-                if let user = response.first {
-                    if let jsonString = user.custom_categories,
-                       !jsonString.isEmpty,
-                       let jsonData = jsonString.data(using: .utf8) {
-                        let categories = try JSONDecoder().decode([CustomCategoryModel].self, from: jsonData)
-                        SecureLogger.info("Loaded \(categories.count) custom categories (string format)")
-                        return categories
-                    }
-                }
-            } catch let stringError {
-                SecureLogger.error("String format failed")
-
-                // Auto-reset to fix corrupted format
-                SecureLogger.warning("Auto-resetting custom_categories")
-                do {
-                    try await client
-                        .from("users")
-                        .update(["custom_categories": "[]"])
-                        .eq("id", value: userId)
-                        .execute()
-                    SecureLogger.info("Reset complete")
-                } catch {
-                    SecureLogger.error("Reset failed")
-                }
-            }
-        }
-
-        SecureLogger.debug("Returning empty array")
-        return []
+        let result = try await CategoryManager.shared.fetchCustom()
+        SecureLogger.info("Loaded \(result.count) custom categories")
+        return result
     }
 }
 

@@ -271,6 +271,7 @@ class AIFewShotLearning {
     private func save() {
         if let data = try? JSONEncoder().encode(examples) {
             UserDefaults.standard.set(data, forKey: storageKey)
+            AIStateSync.pushBlob(cloudKey: "ai.fewshot_examples", encoded: data)
         }
     }
 

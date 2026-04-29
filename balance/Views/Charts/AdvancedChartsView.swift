@@ -83,6 +83,9 @@ struct AdvancedChartsView: View {
                     .accessibilityLabel("Close")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    SectionHelpButton(screen: .analytics)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         exportPNG()
                     } label: {

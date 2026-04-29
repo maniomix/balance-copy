@@ -49,6 +49,11 @@ struct MoreView: View {
             .background(DS.Colors.bg.ignoresSafeArea())
             .navigationTitle("More")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    SectionHelpButton(screen: .more)
+                }
+            }
         }
     }
 

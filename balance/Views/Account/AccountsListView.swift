@@ -71,6 +71,9 @@ struct AccountsListView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                SectionHelpButton(screen: .accounts)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button { showAddAccount = true } label: {
                         Label("Add Account", systemImage: "plus")

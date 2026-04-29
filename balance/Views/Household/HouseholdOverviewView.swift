@@ -73,6 +73,9 @@ struct HouseholdOverviewView: View {
         .navigationTitle("Household")
         .trackScreen("household")
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                SectionHelpButton(screen: .household)
+            }
             if manager.isInHousehold {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {

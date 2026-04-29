@@ -107,6 +107,10 @@ class HouseholdManager: ObservableObject {
         sharedGoals = []
         pendingInvites = []
         save()
+        // Explicitly clear the cloud row — `pushToCloud` early-exits when
+        // household is nil, so without this the cloud blob would resurrect
+        // the household onto a fresh device.
+        Task { try? await SupabaseManager.shared.deleteHouseholdSnapshot() }
     }
 
     // ============================================================

@@ -59,6 +59,9 @@ enum SubscriptionStorePersistence {
     static func save(_ snapshot: SubscriptionStoreSnapshot) {
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         UserDefaults.standard.set(data, forKey: snapshotKey)
+        // Fire-and-forget cloud push (Phase 5.6). UserDefaults remains the
+        // synchronous source of truth in-process; this just mirrors to Supabase.
+        Task { @MainActor in SubscriptionStateSync.push(snapshot) }
     }
 
     /// One-shot migration from the three legacy UserDefaults keys. Returns

@@ -193,37 +193,36 @@ struct ProfileView: View {
     // MARK: - Subscription Status
     
     private var subscriptionCard: some View {
-        let manager = SubscriptionManager.shared
+        let manager = MembershipManager.shared
         let isPro = manager.isPro
-        
+        let tier = manager.tier
+
         let planLabel: String = {
-            switch manager.currentPlan {
-            case "monthly": return "Monthly"
-            case "yearly": return "Yearly"
-            default: return "Free"
+            switch tier {
+            case .pro:      return "Monthly"   // plan-detail wiring lands with StoreKit
+            case .proTrial: return "Free Trial"
+            case .free:     return "Free"
             }
         }()
-        
+
         let priceLabel: String = {
-            switch manager.currentPlan {
-            case "monthly": return "$4.99/mo"
-            case "yearly": return "$28.99/yr"
-            default: return "$0"
+            switch tier {
+            case .pro:      return "$4.99/mo"
+            case .proTrial: return "$0 / 30-day trial"
+            case .free:     return "$0"
             }
         }()
-        
+
         let renewalLabel: String = {
-            guard isPro, let end = manager.currentPeriodEnd else {
-                if manager.status == .trial, let trialEnd = manager.trialEndDate {
-                    let fmt = DateFormatter()
-                    fmt.dateFormat = "MMM d, yyyy"
-                    return "Trial ends \(fmt.string(from: trialEnd))"
-                }
-                return "No active plan"
-            }
             let fmt = DateFormatter()
             fmt.dateFormat = "MMM d, yyyy"
-            return "Renews \(fmt.string(from: end))"
+            if tier == .proTrial, let trialEnd = manager.trialEndsAt {
+                return "Trial ends \(fmt.string(from: trialEnd))"
+            }
+            if tier == .pro, let end = manager.proPeriodEnd {
+                return "Renews \(fmt.string(from: end))"
+            }
+            return isPro ? "Active" : "No active plan"
         }()
         
         return VStack(alignment: .leading, spacing: 10) {
@@ -266,7 +265,7 @@ struct ProfileView: View {
                 }
                 .padding(14)
                 
-                if isPro || manager.status == .trial {
+                if isPro || tier == .proTrial {
                     // Divider
                     Rectangle()
                         .fill(DS.Colors.grid)
@@ -277,7 +276,7 @@ struct ProfileView: View {
                     HStack {
                         // Renewal
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(manager.status == .trial ? "Trial" : "Renewal")
+                            Text(tier == .proTrial ? "Trial" : "Renewal")
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(DS.Colors.subtext)
                             Text(renewalLabel)
@@ -288,7 +287,7 @@ struct ProfileView: View {
                         Spacer()
                         
                         // Price
-                        if manager.status == .active {
+                        if tier == .pro {
                             VStack(alignment: .trailing, spacing: 2) {
                                 Text("Billed")
                                     .font(.system(size: 11, weight: .medium))
@@ -299,7 +298,7 @@ struct ProfileView: View {
                             }
                         }
                         
-                        if manager.status == .trial {
+                        if tier == .proTrial {
                             VStack(alignment: .trailing, spacing: 2) {
                                 Text("Days left")
                                     .font(.system(size: 11, weight: .medium))
@@ -324,7 +323,7 @@ struct ProfileView: View {
                             Text("Transactions")
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(DS.Colors.subtext)
-                            Text("\(store.transactions.count) / \(SubscriptionManager.freeTransactionLimit)")
+                            Text("\(store.transactions.count) / \(MembershipManager.freeTransactionLimit)")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(DS.Colors.text)
                         }
@@ -335,10 +334,10 @@ struct ProfileView: View {
                             Text("Remaining")
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(DS.Colors.subtext)
-                            Text("\(max(0, SubscriptionManager.freeTransactionLimit - store.transactions.count))")
+                            Text("\(max(0, MembershipManager.freeTransactionLimit - store.transactions.count))")
                                 .font(.system(size: 15, weight: .bold, design: .rounded))
                                 .foregroundStyle(
-                                    store.transactions.count >= SubscriptionManager.freeTransactionLimit - 10
+                                    store.transactions.count >= MembershipManager.freeTransactionLimit - 10
                                     ? DS.Colors.danger : DS.Colors.text
                                 )
                         }

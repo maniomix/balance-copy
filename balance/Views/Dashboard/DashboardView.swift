@@ -11,7 +11,7 @@ struct DashboardView: View {
     @State private var trendSelectedDay: Int? = nil
     @State private var showTrendAnalytics: Bool = false
     @State private var trendPage: TrendChartPage = .pace
-    @StateObject private var subscriptionManager = SubscriptionManager.shared
+    @StateObject private var membershipManager = MembershipManager.shared
 
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var supabaseManager: SupabaseManager
@@ -262,6 +262,11 @@ struct DashboardView: View {
                     .accessibilityLabel("Month actions")
                 }
 
+                // Help button (trailing)
+                ToolbarItem(placement: .topBarTrailing) {
+                    SectionHelpButton(screen: .dashboard)
+                }
+
                 // Add button (trailing)
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -343,9 +348,13 @@ struct DashboardView: View {
             Text("Month data could not be saved. Please try again.")
         }
         .sheet(isPresented: $showAdd) {
-            AddTransactionSheet(store: $store, initialMonth: store.selectedMonth)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+            TransactionSheet(
+                .add(initialMonth: store.selectedMonth),
+                in: $store,
+                source: .dashboardFAB
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showPaywall) {
         }
@@ -567,7 +576,7 @@ struct DashboardView: View {
                 Spacer()
 
                 // Transaction count pill (current month only)
-                if !subscriptionManager.isPro {
+                if !membershipManager.isPro {
                     let currentCount = Analytics.monthTransactions(store: store).count
                     let freeLimit = 50
                     Button {
@@ -602,7 +611,7 @@ struct DashboardView: View {
             }
 
             // Free plan bubble (expands on tap)
-            if showTxCountBubble && !subscriptionManager.isPro {
+            if showTxCountBubble && !membershipManager.isPro {
                 freePlanBubble
                     .transition(.asymmetric(
                         insertion: .scale(scale: 0.9, anchor: .top).combined(with: .opacity),

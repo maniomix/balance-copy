@@ -20,6 +20,7 @@ struct GoalDetailView: View {
     @State private var showEditSheet = false
     @State private var showRulesSheet = false
     @State private var showAllContributions = false
+    @State private var failureMessage: String?
 
     private var themeColor: Color {
         GoalColorHelper.color(for: liveGoal.colorToken)
@@ -78,6 +79,18 @@ struct GoalDetailView: View {
             Button("Withdraw", role: .destructive) { Task { await withdraw() } }
         } message: {
             Text("Current balance: \(DS.Format.money(liveGoal.currentAmount))")
+        }
+        .alert(
+            "Couldn't update goal",
+            isPresented: Binding(
+                get: { failureMessage != nil },
+                set: { if !$0 { failureMessage = nil } }
+            ),
+            presenting: failureMessage
+        ) { _ in
+            Button("OK", role: .cancel) { failureMessage = nil }
+        } message: { msg in
+            Text(msg)
         }
         .task { await loadData() }
     }
@@ -564,25 +577,31 @@ struct GoalDetailView: View {
     private func addContribution() async {
         let cents = DS.Format.cents(from: contributionAmountText)
         guard cents > 0 else { return }
-        _ = await goalManager.addContribution(
+        let ok = await goalManager.addContribution(
             to: liveGoal,
             amount: cents,
             note: contributionNote.isEmpty ? nil : contributionNote
         )
         resetAddFields()
         await loadData()
+        if !ok {
+            failureMessage = goalManager.errorMessage ?? "Could not add contribution."
+        }
     }
 
     private func withdraw() async {
         let cents = DS.Format.cents(from: withdrawAmountText)
         guard cents > 0 else { return }
-        _ = await goalManager.withdrawContribution(
+        let ok = await goalManager.withdrawContribution(
             from: liveGoal,
             amount: cents,
             note: withdrawNote.isEmpty ? nil : withdrawNote
         )
         resetWithdrawFields()
         await loadData()
+        if !ok {
+            failureMessage = goalManager.errorMessage ?? "Could not withdraw."
+        }
     }
 
     private func reverse(_ c: GoalContribution) async {

@@ -101,6 +101,7 @@ struct AIChatView: View {
                                 .foregroundStyle(DS.Colors.subtext)
                         }
                         .accessibilityLabel("Chat history")
+                        SectionHelpButton(screen: .aiChat)
                     }
                 }
                 ToolbarItem(placement: .principal) {
@@ -887,8 +888,15 @@ struct AIChatView: View {
     /// closing/reopening the sheet doesn't wipe an in-progress conversation.
     /// Previous sessions remain available via the history button.
     private static var hasStartedChatThisLaunch = false
+    private static var hasPulledChatHistory = false
 
     private func loadPersistedSessionIfNeeded() {
+        // One-shot cloud pull on first chat open per launch (Phase 5.9b).
+        // Reconciles cloud sessions/messages into SwiftData by id; idempotent.
+        if !Self.hasPulledChatHistory {
+            Self.hasPulledChatHistory = true
+            Task { await ChatSync.pull(into: modelContext) }
+        }
         guard currentSession == nil else { return }
         if !Self.hasStartedChatThisLaunch {
             // First open since app launch → new blank chat.

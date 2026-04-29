@@ -5,7 +5,7 @@ import SwiftUI
 struct BudgetView: View {
     @Binding var store: Store
     @State private var showPaywall = false
-    @StateObject private var subscriptionManager = SubscriptionManager.shared
+    @StateObject private var membershipManager = MembershipManager.shared
 
 
     @State private var editingTotal = ""
@@ -345,6 +345,9 @@ struct BudgetView: View {
             .navigationTitle("Budget")
             .dismissKeyboardOnTap()
             .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    SectionHelpButton(screen: .budget)
+                }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
                     Button("Done") {

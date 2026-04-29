@@ -619,6 +619,7 @@ class AIActionHistory: ObservableObject {
         encoder.dateEncodingStrategy = .iso8601
         if let data = try? encoder.encode(records) {
             UserDefaults.standard.set(data, forKey: storageKey)
+            AIStateSync.pushBlob(cloudKey: "ai.action_history", encoded: data)
         }
     }
 

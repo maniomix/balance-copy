@@ -62,7 +62,11 @@ struct AccountDetailView: View {
             AddEditAccountView(mode: .edit(liveAccount), store: $store)
         }
         .sheet(isPresented: $showAddTransaction) {
-            AddTransactionSheet(store: $store, initialMonth: store.selectedMonth)
+            TransactionSheet(
+                .add(initialMonth: store.selectedMonth, accountId: account.id),
+                in: $store,
+                source: .accountDetail
+            )
         }
         .sheet(isPresented: $showTransfer) {
             TransferSheet(store: $store, preselectedSourceId: account.id)

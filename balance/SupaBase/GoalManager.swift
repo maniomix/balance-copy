@@ -19,7 +19,10 @@ class GoalManager: ObservableObject {
         AuthManager.shared.currentUser?.uid.lowercased()
     }
 
-    private init() {}
+    private init() {
+        // Drain any leftover local overlay from the pre-rebuild RLS workaround.
+        UserDefaults.standard.removeObject(forKey: "goal_local_overlay_v1")
+    }
 
     // MARK: - Fetch Goals
 
@@ -31,7 +34,7 @@ class GoalManager: ObservableObject {
             let response: [Goal] = try await client
                 .from("goals")
                 .select()
-                .eq("user_id", value: userId)
+                .eq("owner_id", value: userId)
                 .order("created_at", ascending: false)
                 .execute()
                 .value
@@ -115,7 +118,7 @@ class GoalManager: ObservableObject {
             try await client.from("goals")
                 .delete()
                 .eq("id", value: goal.id.uuidString)
-                .eq("user_id", value: userId)
+                .eq("owner_id", value: userId)
                 .execute()
 
             await fetchGoals()
@@ -138,6 +141,29 @@ class GoalManager: ObservableObject {
         }
     }
 
+    // MARK: - Patch helpers
+
+    /// Body for `UPDATE goals SET current_amount = …, is_completed = …, updated_at = …`.
+    /// Sending only the affected columns means contribution writes don't fail when the
+    /// row contains columns the local schema knows about but the deployed DB doesn't.
+    private struct GoalAmountPatch: Encodable {
+        let current_amount: Int
+        let is_completed: Bool
+        let updated_at: Date
+    }
+
+    private func patchGoalAmount(id: UUID, currentAmount: Int, isCompleted: Bool) async throws {
+        let patch = GoalAmountPatch(
+            current_amount: currentAmount,
+            is_completed: isCompleted,
+            updated_at: Date()
+        )
+        try await client.from("goals")
+            .update(patch)
+            .eq("id", value: id.uuidString)
+            .execute()
+    }
+
     // MARK: - Contributions
 
     func addContribution(
@@ -148,92 +174,80 @@ class GoalManager: ObservableObject {
         linkedTransactionId: UUID? = nil,
         linkedRuleId: UUID? = nil
     ) async -> Bool {
+        guard amount > 0 else { return false }
+        return await writeContribution(
+            goal: goal, signedAmount: amount, note: note,
+            source: source,
+            linkedTransactionId: linkedTransactionId,
+            linkedRuleId: linkedRuleId
+        )
+    }
+
+    /// Withdraw from a goal (stored as a negative-amount contribution row).
+    func withdrawContribution(from goal: Goal, amount: Int, note: String? = nil) async -> Bool {
+        let liveAmount = goals.first(where: { $0.id == goal.id })?.currentAmount ?? goal.currentAmount
+        let withdrawAmount = min(amount, liveAmount)
+        guard withdrawAmount > 0 else { return false }
+        return await writeContribution(
+            goal: goal, signedAmount: -withdrawAmount, note: note,
+            source: .manual, linkedTransactionId: nil, linkedRuleId: nil
+        )
+    }
+
+    /// Inserts a goal_contributions row and patches the goal's denorm
+    /// `current_amount`/`is_completed` cache in a single pair of writes.
+    /// Fires milestone/completion haptics based on pre/post tier crossings.
+    private func writeContribution(
+        goal: Goal,
+        signedAmount: Int,
+        note: String?,
+        source: GoalContribution.ContributionSource,
+        linkedTransactionId: UUID?,
+        linkedRuleId: UUID?
+    ) async -> Bool {
+        errorMessage = nil
+
+        let target = goal.targetAmount
+        let preAmount = goals.first(where: { $0.id == goal.id })?.currentAmount ?? goal.currentAmount
+        let preTier  = milestoneTier(amount: preAmount, target: target)
+        let newAmount = max(0, preAmount + signedAmount)
+        let willComplete = newAmount >= target && target > 0
+        let postTier = milestoneTier(amount: newAmount, target: target)
+
         let contribution = GoalContribution(
             goalId: goal.id,
-            amount: amount,
+            amount: signedAmount,
             note: note,
             source: source,
             linkedTransactionId: linkedTransactionId,
             linkedRuleId: linkedRuleId
         )
-        errorMessage = nil
 
         do {
             try await client.from("goal_contributions").insert(contribution).execute()
+            try await patchGoalAmount(id: goal.id, currentAmount: newAmount, isCompleted: willComplete)
+        } catch {
+            errorMessage = AppConfig.shared.safeErrorMessage(detail: error.localizedDescription)
+            SecureLogger.error("Goal contribution write failed", error)
+            return false
+        }
 
-            // Update goal's current amount + detect 25/50/75/100% milestones.
-            // Phase 10 polish: fire haptics when crossing a quarter threshold.
-            var updated = goal
-            let preTier = milestoneTier(amount: goal.currentAmount, target: goal.targetAmount)
-            updated.currentAmount += amount
-            let postTier = milestoneTier(amount: updated.currentAmount, target: updated.targetAmount)
-
-            if updated.currentAmount >= updated.targetAmount {
-                let wasCompleted = updated.isCompleted
-                updated.isCompleted = true
-                if !wasCompleted {
-                    AnalyticsManager.shared.track(.goalCompleted)
-                    Haptics.goalCompleted()
-                }
+        // Update in-memory cache + fire haptics
+        if let idx = goals.firstIndex(where: { $0.id == goal.id }) {
+            goals[idx].currentAmount = newAmount
+            goals[idx].isCompleted = willComplete
+        }
+        if signedAmount > 0 {
+            AnalyticsManager.shared.track(.goalContribution)
+            if willComplete, !goal.isCompleted {
+                AnalyticsManager.shared.track(.goalCompleted)
+                Haptics.goalCompleted()
             } else if postTier > preTier {
                 Haptics.goalMilestone()
             }
-            AnalyticsManager.shared.track(.goalContribution)
-            updated.updatedAt = Date()
-
-            try await client.from("goals")
-                .update(updated)
-                .eq("id", value: updated.id.uuidString)
-                .execute()
-
-            await fetchGoals()
-            SecureLogger.info("Goal contribution added")
-            return true
-        } catch {
-            errorMessage = AppConfig.shared.safeErrorMessage(detail: error.localizedDescription)
-            SecureLogger.error("Goal contribution failed", error)
-            return false
         }
-    }
-
-    /// Withdraw from a goal (negative contribution)
-    func withdrawContribution(from goal: Goal, amount: Int, note: String? = nil) async -> Bool {
-        let withdrawAmount = min(amount, goal.currentAmount)
-        guard withdrawAmount > 0 else { return false }
-
-        let contribution = GoalContribution(
-            goalId: goal.id,
-            amount: -withdrawAmount,
-            note: note ?? "Withdrawal",
-            source: .manual
-        )
-        errorMessage = nil
-
-        do {
-            try await client.from("goal_contributions").insert(contribution).execute()
-
-            var updated = goal
-            updated.currentAmount = max(0, updated.currentAmount - withdrawAmount)
-            // Only un-complete if the withdrawal drops balance below target.
-            // A 1¢ withdrawal from a fully-funded goal should keep it completed.
-            if updated.currentAmount < updated.targetAmount {
-                updated.isCompleted = false
-            }
-            updated.updatedAt = Date()
-
-            try await client.from("goals")
-                .update(updated)
-                .eq("id", value: updated.id.uuidString)
-                .execute()
-
-            await fetchGoals()
-            SecureLogger.info("Goal withdrawal processed")
-            return true
-        } catch {
-            errorMessage = AppConfig.shared.safeErrorMessage(detail: error.localizedDescription)
-            SecureLogger.error("Goal withdrawal failed", error)
-            return false
-        }
+        SecureLogger.info("Goal contribution persisted")
+        return true
     }
 
     /// Returns 0 for <25%, 1 for 25–49%, 2 for 50–74%, 3 for 75–99%, 4 for ≥100%.
@@ -272,10 +286,11 @@ class GoalManager: ObservableObject {
             }
             updated.updatedAt = Date()
 
-            try await client.from("goals")
-                .update(updated)
-                .eq("id", value: updated.id.uuidString)
-                .execute()
+            try await patchGoalAmount(
+                id: updated.id,
+                currentAmount: updated.currentAmount,
+                isCompleted: updated.isCompleted
+            )
 
             await fetchGoals()
             SecureLogger.info("Goal contribution reversed")

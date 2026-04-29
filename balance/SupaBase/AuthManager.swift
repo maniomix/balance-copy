@@ -29,6 +29,9 @@ class AuthManager: ObservableObject {
     @Published var isAuthenticated = false
     @Published var currentUser: User?
     @Published var isCheckingSession = true  // prevents login screen flash
+    /// Set after a sign-up where Supabase requires email confirmation.
+    /// The auth router shows EmailConfirmationView while this is non-nil.
+    @Published var pendingConfirmationEmail: String?
 
     /// Local rate-limit state. Each sensitive auth surface tracks attempts
     /// independently so a lockout on one flow doesn't block the others.
@@ -77,6 +80,10 @@ class AuthManager: ObservableObject {
                     self.isCheckingSession = false
                     SecureLogger.info("Session restored for user")
                 }
+                // Pull cross-device per-user state (Phase 5.6+).
+                await SubscriptionStateSync.pull()
+                await SavedFilterPresetSync.pull()
+                await AIStateSync.pull()
             } catch {
                 await MainActor.run {
                     self.isAuthenticated = false
@@ -132,16 +139,159 @@ class AuthManager: ObservableObject {
             throw error
         }
 
-        // Manually update auth state
+        // After signup, Supabase either:
+        //   • returns an active session (email-confirmation OFF) → sign user in
+        //   • returns no session (email-confirmation ON) → route to
+        //     EmailConfirmationView via `pendingConfirmationEmail`
         do {
             let session = try await supabase.client.auth.session
             await MainActor.run {
                 self.currentUser = session.user
                 self.isAuthenticated = true
+                self.pendingConfirmationEmail = nil
             }
         } catch {
-            SecureLogger.warning("Could not get session after signup")
+            await MainActor.run {
+                self.pendingConfirmationEmail = email
+                SecureLogger.info("Sign-up pending email confirmation")
+            }
         }
+    }
+
+    /// Resend the verification email for an account that's still in the
+    /// pending-confirmation state.
+    func resendConfirmationEmail() async throws {
+        guard let email = pendingConfirmationEmail else { return }
+        try await supabase.client.auth.resend(email: email, type: .signup)
+        SecureLogger.info("Resent confirmation email")
+    }
+
+    /// Cancel the pending-confirmation flow and return to the sign-in screen.
+    func cancelPendingConfirmation() {
+        pendingConfirmationEmail = nil
+    }
+
+    // MARK: - OAuth (Google / Apple)
+    //
+    // Web-flow OAuth via Supabase. Supabase opens the provider's auth page,
+    // user signs in, the redirect URL `centmond://auth-callback` returns
+    // the user to the app where `handleOpenURL(_:)` finalizes the session.
+
+    func signInWithGoogle() async throws {
+        let url = try supabase.client.auth.getOAuthSignInURL(
+            provider: .google,
+            redirectTo: URL(string: "centmond://auth-callback")
+        )
+        await MainActor.run {
+            UIApplication.shared.open(url)
+        }
+        SecureLogger.info("Started Google OAuth flow")
+    }
+
+    func signInWithApple() async throws {
+        // Apple provider may be disabled in Supabase until the user has
+        // an Apple Developer account; this will surface as a server error,
+        // which is the intended UX (button shown, nicely errors).
+        let url = try supabase.client.auth.getOAuthSignInURL(
+            provider: .apple,
+            redirectTo: URL(string: "centmond://auth-callback")
+        )
+        await MainActor.run {
+            UIApplication.shared.open(url)
+        }
+        SecureLogger.info("Started Apple OAuth flow")
+    }
+
+    /// Called by the app's onOpenURL when the OAuth provider redirects back
+    /// to `centmond://auth-callback?...`. Completes the session.
+    func handleOpenURL(_ url: URL) {
+        Task {
+            do {
+                try await supabase.client.auth.session(from: url)
+                SecureLogger.info("OAuth session completed")
+            } catch {
+                SecureLogger.error("OAuth session completion failed", error)
+            }
+        }
+    }
+
+    // MARK: - Stale-session detection
+
+    /// Verify the cached session still maps to a real user on the server.
+    /// If the user was deleted on another device the JWT remains in Keychain
+    /// and the SDK still reports `isAuthenticated = true`, but every DB write
+    /// errors with FK violations against `auth.users`. Calling this on app
+    /// foreground / cold start catches that case and force-signs-out.
+    ///
+    /// **Only signs out on the definitive "no profile row" signal.** RLS
+    /// scopes `profiles` to `auth.uid()` so a deleted user gets zero rows
+    /// back. Transient network / auth errors are ignored (we don't want a
+    /// flight-mode user to lose their session).
+    func validateSessionStillValid() async {
+        guard isAuthenticated else { return }
+        struct ProbeRow: Codable { let id: String }
+        do {
+            let rows: [ProbeRow] = try await supabase.client
+                .from("profiles")
+                .select("id")
+                .limit(1)
+                .execute()
+                .value
+            if rows.isEmpty {
+                SecureLogger.warning("Profile missing — user was deleted; signing out")
+                await forceSignOutAfterStaleSession()
+            }
+        } catch {
+            // Network / SDK errors are ignored on the validation path — they
+            // could be transient. The sync-error handler below catches the
+            // definitive "FK violation against auth.users" case.
+            SecureLogger.debug("Session probe errored (non-fatal): \(error.localizedDescription)")
+        }
+    }
+
+    /// Inspect a sync/repository error and force-sign-out if it indicates
+    /// the user no longer exists on the server (FK violation pointing at
+    /// `auth.users`, or "user not found" auth error). Call this from any
+    /// sync-error catch site that currently shows an error toast.
+    func handleSyncError(_ error: Error) {
+        let msg = String(describing: error).lowercased()
+        let userGone =
+            msg.contains("auth.users") ||
+            msg.contains("owner_id_fkey") ||
+            msg.contains("user_id_fkey") ||
+            msg.contains("not present in table \"users\"") ||
+            (msg.contains("violates foreign key") && msg.contains("owner_id"))
+        guard userGone else { return }
+        SecureLogger.warning("Sync error indicates user no longer exists; forcing sign-out")
+        Task { await forceSignOutAfterStaleSession() }
+    }
+
+    /// Wipes the locally cached state and signs out without surfacing an
+    /// error. Used when the server says "you don't exist anymore."
+    func forceSignOutAfterStaleSession() async {
+        AuthManager.wipeLocalUserData()
+        do { try supabase.signOut() } catch {
+            // SDK can throw if there's already no session; ignore.
+        }
+        await MainActor.run {
+            self.isAuthenticated = false
+            self.currentUser = nil
+            self.pendingConfirmationEmail = nil
+        }
+    }
+
+    /// The set of UserDefaults keys that should be cleared when a user is
+    /// removed (delete-account on this device, or stale-session sign-out
+    /// because the user was deleted on another device).
+    static func wipeLocalUserData() {
+        let defaults = UserDefaults.standard
+        let keys = [
+            "ai.actionHistory.v2", "ai.memoryStore", "ai.merchantMemory",
+            "ai.fewShotExamples", "ai.userPreferences", "ai.proactive.dismissedKeys",
+            "subscriptions.store_v2", "transactions.savedFilterPresets.v1",
+            "goal_local_overlay_v1"
+        ]
+        for k in keys { defaults.removeObject(forKey: k) }
     }
 
     // MARK: - Sign In

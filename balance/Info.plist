@@ -24,14 +24,6 @@
 	<array>
 		<dict>
 			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>com.googleusercontent.apps.931720596979-cb3vp3d3beib07ju95b6bi6mc0spkbma</string>
-			</array>
-		</dict>
-		<dict>
-			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
 			<key>CFBundleURLName</key>
 			<string>com.centmond.deeplink</string>

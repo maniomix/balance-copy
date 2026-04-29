@@ -76,6 +76,11 @@ struct InsightsView: View {
                 .padding(.bottom, 24)
             }
             .navigationTitle("Insights")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    SectionHelpButton(screen: .insights)
+                }
+            }
             .onAppear {
                 insightEngine.refresh(store: store)
             }

@@ -579,6 +579,7 @@ class AIMemoryStore: ObservableObject {
     private func save() {
         if let data = try? JSONEncoder().encode(entries) {
             UserDefaults.standard.set(data, forKey: storageKey)
+            AIStateSync.pushBlob(cloudKey: "ai.memory_entries", encoded: data)
         }
     }
 }

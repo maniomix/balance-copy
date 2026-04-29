@@ -79,6 +79,9 @@ struct SubscriptionsOverviewView: View {
             .trackScreen("subscriptions")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    SectionHelpButton(screen: .subscriptions)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Haptics.selection()
                         showAddSheet = true

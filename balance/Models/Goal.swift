@@ -87,7 +87,7 @@ struct Goal: Identifiable, Codable, Hashable {
         case isCompleted = "is_completed"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
-        case userId = "user_id"
+        case userId = "owner_id"
         case isArchived = "is_archived"
         case pausedAt = "paused_at"
         case categoryStorageKey = "category_storage_key"
@@ -371,6 +371,23 @@ struct GoalContribution: Identifiable, Codable, Hashable {
         self.linkedRuleId = try c.decodeIfPresent(UUID.self, forKey: .linkedRuleId)
         self.isReversed = try c.decodeIfPresent(Bool.self, forKey: .isReversed) ?? false
         self.reversedAt = try c.decodeIfPresent(Date.self, forKey: .reversedAt)
+    }
+
+    /// Schema-tolerant encoder: omits Phase 1.5 columns when they're at default
+    /// values. Lets inserts succeed against DBs where `goals_migration.sql` may
+    /// not have been applied yet (e.g. fresh Supabase project, dev branch).
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(goalId, forKey: .goalId)
+        try c.encode(amount, forKey: .amount)
+        try c.encodeIfPresent(note, forKey: .note)
+        try c.encode(source, forKey: .source)
+        try c.encode(createdAt, forKey: .createdAt)
+        try c.encodeIfPresent(linkedTransactionId, forKey: .linkedTransactionId)
+        try c.encodeIfPresent(linkedRuleId, forKey: .linkedRuleId)
+        if isReversed { try c.encode(isReversed, forKey: .isReversed) }
+        try c.encodeIfPresent(reversedAt, forKey: .reversedAt)
     }
 
     enum ContributionSource: String, Codable {

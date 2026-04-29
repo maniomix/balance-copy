@@ -48,7 +48,7 @@ class AccountManager: ObservableObject {
             let response: [Account] = try await client
                 .from("accounts")
                 .select()
-                .eq("user_id", value: userId.uuidString)
+                .eq("owner_id", value: userId.uuidString)
                 .eq("is_archived", value: false)
                 .order("created_at", ascending: false)
                 .execute()
@@ -74,7 +74,7 @@ class AccountManager: ObservableObject {
             let response: [Account] = try await client
                 .from("accounts")
                 .select()
-                .eq("user_id", value: userId.uuidString)
+                .eq("owner_id", value: userId.uuidString)
                 .order("created_at", ascending: false)
                 .execute()
                 .value

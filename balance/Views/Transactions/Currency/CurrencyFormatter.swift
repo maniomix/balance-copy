@@ -166,8 +166,8 @@ extension Double {
 }
 
 extension Int {
-    /// فرمت کردن به string با کارنسی
+    /// Int amounts are stored in cents — divide by 100 before formatting.
     func currencyFormatted(showSymbol: Bool = true, showDecimal: Bool = true) -> String {
-        Double(self).currencyFormatted(showSymbol: showSymbol, showDecimal: showDecimal)
+        (Double(self) / 100.0).currencyFormatted(showSymbol: showSymbol, showDecimal: showDecimal)
     }
 }

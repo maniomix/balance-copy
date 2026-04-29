@@ -839,7 +839,11 @@ class AIProactiveEngine: ObservableObject {
     }
 
     private func saveDismissedKeys() {
-        UserDefaults.standard.set(Array(dismissedKeys), forKey: dismissedKeysStorageKey)
+        let arr = Array(dismissedKeys)
+        UserDefaults.standard.set(arr, forKey: dismissedKeysStorageKey)
+        if let data = try? JSONEncoder().encode(arr) {
+            AIStateSync.pushBlob(cloudKey: "ai.proactive_dismissals", encoded: data)
+        }
     }
 
     // ══════════════════════════════════════════════════════════

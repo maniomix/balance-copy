@@ -232,6 +232,7 @@ class AIMerchantMemory: ObservableObject {
     private func save() {
         if let data = try? JSONEncoder().encode(merchants) {
             UserDefaults.standard.set(data, forKey: key)
+            AIStateSync.pushBlob(cloudKey: "ai.merchant_profiles", encoded: data)
         }
     }
 }

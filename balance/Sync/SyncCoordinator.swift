@@ -109,6 +109,12 @@ class SyncCoordinator: ObservableObject {
                     SecureLogger.info("Network restored — scheduling reconnect sync")
                     self.needsReconnectSync = true
                     self.status = .idle
+                    // Fire an immediate reconcile (Phase 7) so the user doesn't
+                    // wait up to 2 minutes for the periodic loop. ContentView
+                    // observes this notification and calls fullReconcile with
+                    // the live store + userId (which SyncCoordinator doesn't
+                    // hold directly).
+                    NotificationCenter.default.post(name: .syncShouldReconcileNow, object: nil)
                 } else if !self.isOnline {
                     self.status = .offline
                     SecureLogger.info("Network lost — switching to offline mode")
@@ -383,4 +389,13 @@ class SyncCoordinator: ObservableObject {
     func resetRetryState() {
         retryCount = 0
     }
+}
+
+// MARK: - Notifications
+
+extension Notification.Name {
+    /// Posted when network connectivity is restored after being offline.
+    /// ContentView observes this to fire an immediate `fullReconcile`
+    /// so pending local edits get pushed without waiting for the periodic loop.
+    static let syncShouldReconcileNow = Notification.Name("centmond.syncShouldReconcileNow")
 }

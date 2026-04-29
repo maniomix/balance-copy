@@ -183,7 +183,11 @@ struct CustomCategoryModel: Codable, Identifiable, Hashable {
         Color(hex: colorHex) ?? .purple
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, icon, colorHex, sortOrder }
+    private enum CodingKeys: String, CodingKey {
+        case id, name, icon
+        case colorHex = "color_hex"
+        case sortOrder = "sort_order"
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -191,7 +195,6 @@ struct CustomCategoryModel: Codable, Identifiable, Hashable {
         self.name = try c.decode(String.self, forKey: .name)
         self.icon = try c.decode(String.self, forKey: .icon)
         self.colorHex = try c.decode(String.self, forKey: .colorHex)
-        // sortOrder is new — default to 0 for legacy records
         self.sortOrder = (try? c.decode(Int.self, forKey: .sortOrder)) ?? 0
     }
 }

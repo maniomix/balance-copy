@@ -48,7 +48,7 @@ struct ContentView: View {
         }
 
         // Load ancillary data
-        Task { await SubscriptionManager.shared.loadSubscription() }
+        Task { await MembershipManager.shared.load() }
         HouseholdManager.shared.load(userId: userId)
 
         // 1. Load from local storage FIRST (fast, never fails)
@@ -109,6 +109,46 @@ struct ContentView: View {
         guard let userId = authManager.currentUser?.uid else { return }
         if !store.save(userId: userId) {
             showSaveFailedAlert = true
+        }
+    }
+
+    /// Auth-state change handler. Extracted from the `.task(id:)` modifier
+    /// so the body's modifier chain stays small enough for the Swift type
+    /// checker to handle in reasonable time.
+    @MainActor
+    private func handleAuthChange() async {
+        if authManager.isAuthenticated, let userId = authManager.currentUser?.uid {
+            // Sync on login
+            if let cloudStore = await syncCoordinator.pullFromCloud(localStore: store, userId: userId) {
+                store = cloudStore
+                saveStore()
+            }
+            // Realtime listener — on any cross-device change, re-pull store.
+            supabaseManager.startRealtimeSync(userId: userId) {
+                Task { @MainActor in await refreshStoreFromCloud() }
+            }
+        } else {
+            supabaseManager.stopRealtimeSync()
+            syncCoordinator.stopPeriodicSync()
+            store = Store()
+            showLaunchScreen = true
+        }
+    }
+
+    /// Reconcile the store after a realtime change.
+    ///
+    /// **Important:** uses `fullReconcile` (push-then-pull), not a bare pull.
+    /// If we just pulled, any local edit still in the 2-second debounce
+    /// window would be silently overwritten by the cloud snapshot. By pushing
+    /// first, the local edit is uploaded before the pull happens, so it
+    /// survives the round-trip.
+    @MainActor
+    private func refreshStoreFromCloud() async {
+        guard let userId = authManager.currentUser?.uid else { return }
+        if let cloudStore = await syncCoordinator.fullReconcile(store: store, userId: userId) {
+            store = cloudStore
+            saveStore()
+            SecureLogger.debug("Realtime: store refreshed from cloud")
         }
     }
     
@@ -367,6 +407,13 @@ struct ContentView: View {
             }
             .tint(DS.Colors.accent)
             .id(uiRefreshID)
+            .overlay(alignment: .top) {
+                // Phase 7: surface offline / pending / sync-error states.
+                // Auto-hides when fully synced. Shown only when authenticated.
+                if authManager.isAuthenticated {
+                    SyncStatusPill()
+                }
+            }
             .alert("Save Failed", isPresented: $showSaveFailedAlert) {
                 Button("OK", role: .cancel) {}
             } message: {
@@ -374,8 +421,21 @@ struct ContentView: View {
             }
             .onChange(of: syncCoordinator.status) { _, newStatus in
                 if case .error(let message) = newStatus {
-                    syncErrorMessage = message
-                    showSyncErrorToast = true
+                    // If the error indicates the user no longer exists on the
+                    // server (e.g. account deleted on another device), force a
+                    // sign-out instead of nagging with a sync-error alert.
+                    let lower = message.lowercased()
+                    let userGone =
+                        lower.contains("auth.users") ||
+                        lower.contains("owner_id_fkey") ||
+                        lower.contains("not present in table \"users\"") ||
+                        (lower.contains("violates foreign key") && lower.contains("owner_id"))
+                    if userGone {
+                        Task { await authManager.forceSignOutAfterStaleSession() }
+                    } else {
+                        syncErrorMessage = message
+                        showSyncErrorToast = true
+                    }
                 }
             }
             .alert("Sync Error", isPresented: $showSyncErrorToast) {
@@ -388,26 +448,21 @@ struct ContentView: View {
             } message: {
                 Text("Local data could not be loaded. A backup has been saved. Your data will be restored from the cloud if available.")
             }
-            .task(id: authManager.isAuthenticated) {
-                if authManager.isAuthenticated, let userId = authManager.currentUser?.uid {
-                    // Sync when user logs in via SyncCoordinator
-                    if let cloudStore = await syncCoordinator.pullFromCloud(localStore: store, userId: userId) {
-                        store = cloudStore
+            // Phase 7: when network reconnects, push pending local edits +
+            // pull cloud state immediately instead of waiting for the next
+            // periodic sync tick (which can be up to 2 min away).
+            .onReceive(NotificationCenter.default.publisher(for: .syncShouldReconcileNow)) { _ in
+                Task { @MainActor in
+                    guard authManager.isAuthenticated,
+                          let userId = authManager.currentUser?.uid else { return }
+                    if let reconciled = await syncCoordinator.fullReconcile(store: store, userId: userId) {
+                        store = reconciled
                         saveStore()
+                        SecureLogger.info("Reconnect: full reconcile completed")
                     }
-
-                    // Start real-time listener for auto-sync from other devices
-                    supabaseManager.startRealtimeSync(userId: userId) {
-                        SecureLogger.debug("Real-time sync triggered")
-                    }
-                } else {
-                    // User logged out — stop listeners, periodic sync, and reset store
-                    supabaseManager.stopRealtimeSync()
-                    syncCoordinator.stopPeriodicSync()
-                    store = Store()
-                    showLaunchScreen = true
                 }
             }
+            .task(id: authManager.isAuthenticated) { await handleAuthChange() }
             .task {
                 // COMMENTED OUT - recurring transactions باگ داره
                 // if authManager.isAuthenticated {

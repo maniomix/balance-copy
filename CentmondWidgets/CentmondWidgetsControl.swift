@@ -10,7 +10,7 @@ import SwiftUI
 import WidgetKit
 
 struct CentmondWidgetsControl: ControlWidget {
-    static let kind: String = "mani.balance.CentmondWidgets"
+    static let kind: String = "mani.Centmond.CentmondWidgets"
 
     var body: some ControlWidgetConfiguration {
         AppIntentControlConfiguration(

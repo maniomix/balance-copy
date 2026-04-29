@@ -89,6 +89,7 @@ final class ChatPersistenceManager {
         let session = ChatSession(title: title)
         context.insert(session)
         try? context.save()
+        ChatSync.pushSession(session)
         return session
     }
 
@@ -114,6 +115,8 @@ final class ChatPersistenceManager {
         session.messages.append(record)
         session.updatedAt = Date()
         try? context.save()
+        ChatSync.pushMessage(record, sessionId: session.id)
+        ChatSync.pushSession(session)
     }
 
     func saveAssistantMessage(_ text: String, actions: [AIAction]?, session: ChatSession, context: ModelContext) {
@@ -130,6 +133,8 @@ final class ChatPersistenceManager {
         }
 
         try? context.save()
+        ChatSync.pushMessage(record, sessionId: session.id)
+        ChatSync.pushSession(session)
     }
 
     // MARK: - Loading into AIConversation
@@ -158,13 +163,16 @@ final class ChatPersistenceManager {
         session.title = trimmed
         session.updatedAt = Date()
         try? context.save()
+        ChatSync.pushSession(session)
     }
 
     // MARK: - Deletion
 
     func deleteSession(_ session: ChatSession, context: ModelContext) {
+        let id = session.id
         context.delete(session)
         try? context.save()
+        ChatSync.deleteSession(id: id)
     }
 
     func clearAll(context: ModelContext) {
@@ -172,5 +180,6 @@ final class ChatPersistenceManager {
             context.delete(session)
         }
         try? context.save()
+        ChatSync.deleteAllSessions()
     }
 }

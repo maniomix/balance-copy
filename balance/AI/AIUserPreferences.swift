@@ -269,6 +269,7 @@ class AIUserPreferences: ObservableObject {
         )
         if let data = try? JSONEncoder().encode(stored) {
             UserDefaults.standard.set(data, forKey: key)
+            AIStateSync.pushBlob(cloudKey: "ai.user_preferences", encoded: data)
         }
     }
 
