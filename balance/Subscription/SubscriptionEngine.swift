@@ -45,6 +45,13 @@ class SubscriptionEngine: ObservableObject {
     /// rebuilding the in-memory list, so user edits survive re-detection.
     private var snapshot: SubscriptionStoreSnapshot = SubscriptionStoreSnapshot()
 
+    /// Signature of the last input we analyzed. Used to skip the (expensive)
+    /// detection pass when called repeatedly with the same transactions —
+    /// e.g. dashboard `.onAppear` followed by month-switch `.onChange` on
+    /// the same data. Reset to `nil` on snapshot mutation paths that
+    /// require re-analysis (none today; user edits flow through transactions).
+    private var lastAnalyzedSignature: Int?
+
     /// Read-only window onto manual records. Kept for the few call sites
     /// that want "user-added subs only" without filtering themselves.
     var manualSubscriptions: [DetectedSubscription] {
@@ -143,6 +150,9 @@ class SubscriptionEngine: ObservableObject {
     /// orphaned ones (no longer in `store.recurringTransactions`) get
     /// pruned unless the user has edited them.
     func analyze(store: Store) async {
+        let signature = store.transactionsSignature
+        if signature == lastAnalyzedSignature { return }
+
         isLoading = true
 
         let transactions = store.transactions
@@ -162,6 +172,7 @@ class SubscriptionEngine: ObservableObject {
         saveSnapshot()
         republish()
         self.isLoading = false
+        self.lastAnalyzedSignature = signature
     }
 
     /// Re-derive the global insight list from the post-merge snapshot.
@@ -169,7 +180,10 @@ class SubscriptionEngine: ObservableObject {
     /// running this after merge means user-paused / hidden / manual rows
     /// are factored in correctly.
     private func computeGlobalInsights() -> [SubscriptionInsight] {
-        let visible = snapshot.records.filter { !snapshot.hiddenKeys.contains($0.merchantKey) }
+        // Hide model retired — every record is visible. (`hiddenKeys`
+        // is cleared in republish; this filter is now a no-op but the
+        // local var keeps the rest of the function unchanged.)
+        let visible = snapshot.records
         var out: [SubscriptionInsight] = []
 
         if visible.contains(where: { $0.hasPriceIncrease && $0.status == .active }) {
@@ -340,7 +354,15 @@ class SubscriptionEngine: ObservableObject {
     /// reschedules subscription alerts from here so notifications stay
     /// in lockstep with the data without per-call-site wiring.
     private func republish() {
-        let visible = snapshot.records.filter { !snapshot.hiddenKeys.contains($0.merchantKey) }
+        // Hide-state model retired — show all records. Any leftover
+        // hiddenKeys from older versions are cleared in place so the
+        // persisted snapshot stops carrying dead state. Save only on
+        // the cleanup pass to avoid an extra write on every republish.
+        if !snapshot.hiddenKeys.isEmpty {
+            snapshot.hiddenKeys.removeAll()
+            saveSnapshot()
+        }
+        let visible = snapshot.records
         // Sort by monthly cost descending to match prior behavior.
         self.subscriptions = visible.sorted { $0.monthlyCost > $1.monthlyCost }
         recalcTotals()
@@ -388,23 +410,28 @@ class SubscriptionEngine: ObservableObject {
         republish()
     }
 
-    /// Hide a subscription. The record stays in `snapshot.records` so the
-    /// upcoming Hidden section can render and unhide it; the merchant key
-    /// goes into `hiddenKeys` so re-detection won't surface it again.
-    func removeSubscription(_ sub: DetectedSubscription) {
-        guard let idx = snapshot.records.firstIndex(where: { $0.id == sub.id }) else { return }
-        let key = snapshot.records[idx].merchantKey
-        snapshot.hiddenKeys.insert(key)
+    /// Delete a subscription completely — removes the record from
+    /// `snapshot.records` and also clears any leftover hidden-key entry
+    /// for the same merchant so re-detection isn't suppressed by stale
+    /// state from before the hide/unhide model was retired.
+    ///
+    /// (Replaces the previous hide/unhide pair. The Hidden section in
+    /// the UI is gone; users now permanently delete subscriptions
+    /// instead of stashing them. Re-detection from transactions can
+    /// re-add a deleted sub on the next analyze pass — that's fine.)
+    func deleteSubscription(_ sub: DetectedSubscription) {
+        snapshot.records.removeAll { $0.id == sub.id }
+        snapshot.hiddenKeys.remove(sub.merchantKey)
         saveSnapshot()
         republish()
     }
 
-    /// Unhide a previously-hidden subscription. Used by the Hidden section
-    /// in the upcoming UI rebuild; safe to call now.
-    func unhideSubscription(_ sub: DetectedSubscription) {
-        snapshot.hiddenKeys.remove(sub.merchantKey)
-        saveSnapshot()
-        republish()
+    /// Legacy alias — kept so any in-flight callers don't break compile.
+    /// Will be removed in a follow-up sweep once we confirm nothing
+    /// upstream still calls it.
+    @available(*, deprecated, message: "Use deleteSubscription(_:) — hide/unhide model retired.")
+    func removeSubscription(_ sub: DetectedSubscription) {
+        deleteSubscription(sub)
     }
 
     /// Phase 5a — write an edited record back into the snapshot by id.

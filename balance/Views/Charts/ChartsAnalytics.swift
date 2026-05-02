@@ -149,7 +149,17 @@ final class ChartsAnalytics {
 
     func snapshot(store: Store, range: ChartRange, now: Date = Date()) -> Snapshot {
         let nowBucket = Int(now.timeIntervalSinceReferenceDate / 3600) // hourly cache key
-        let key = CacheKey(range: range, storeHash: store.transactions.hashValue ^ store.budgetsByMonth.hashValue, nowBucket: nowBucket)
+        // Was `store.transactions.hashValue ^ store.budgetsByMonth.hashValue` —
+        // `transactions.hashValue` walks every element, so the cache check
+        // itself was O(n) on every chart render. `transactionsSignature` is
+        // an O(n) walk too, but does only `>` comparisons over Dates and is
+        // shared with the engines (Subscription/Forecast/Proactive), so the
+        // cost is paid once per render across all gated callers.
+        var hasher = Hasher()
+        hasher.combine(store.transactionsSignature)
+        hasher.combine(store.budgetsByMonth)
+        let storeHash = hasher.finalize()
+        let key = CacheKey(range: range, storeHash: storeHash, nowBucket: nowBucket)
         if let cached = cache[key] {
             return Snapshot(range: range, buckets: cached.buckets, previousBuckets: cached.previousBuckets, categories: cached.categories, merchants: cached.merchants, kpi: cached.kpi)
         }

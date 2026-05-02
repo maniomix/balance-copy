@@ -186,6 +186,10 @@ class AIProactiveEngine: ObservableObject {
     // MARK: - Public API
     // ══════════════════════════════════════════════════════════
 
+    /// `(transactionsSignature, mode-intensity, monthKey)` of the last refresh.
+    /// Skips the full multi-scan rebuild when nothing relevant changed.
+    private var lastRefreshSignature: Int?
+
     /// Refresh all proactive items from current app state.
     func refresh(store: Store) {
         // Phase 9: Check if proactive items are enabled for current mode
@@ -194,8 +198,17 @@ class AIProactiveEngine: ObservableObject {
 
         guard intensity != .none else {
             items = []
+            lastRefreshSignature = nil
             return
         }
+
+        var hasher = Hasher()
+        hasher.combine(store.transactionsSignature)
+        hasher.combine(intensity)
+        hasher.combine(Store.monthKey(store.selectedMonth))
+        let signature = hasher.finalize()
+        if signature == lastRefreshSignature { return }
+        lastRefreshSignature = signature
 
         var generated: [ProactiveItem] = []
 

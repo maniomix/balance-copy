@@ -84,38 +84,63 @@ struct TransactionsView: View {
 
     private let uiAnim = Animation.spring(response: 0.35, dampingFraction: 0.9, blendDuration: 0.0)
 
-    private var filtered: [Transaction] {
-        // Choose source based on search scope
+    /// Cached filter+sort result. Was a computed property — body referenced
+    /// it 5× per render (lines using `filtered.count`, `filtered.isEmpty`,
+    /// the grouped/list paths), so every keystroke ran 5×O(n log n) work
+    /// plus 1000+ `.lowercased()` String allocations per pass. Now computed
+    /// once via `.onChange(of: filteredChangeKey)` and read 5× from state.
+    @State private var filteredCache: [Transaction] = []
+
+    private var filtered: [Transaction] { filteredCache }
+
+    private struct FilteredChangeKey: Equatable {
+        var search: String
+        var scopeIsThisMonth: Bool
+        var sortOrderRaw: String
+        var filter: TransactionFilter
+        var txSignature: Int
+        var monthKey: String
+    }
+
+    private var filteredChangeKey: FilteredChangeKey {
+        FilteredChangeKey(
+            search: search,
+            scopeIsThisMonth: searchScope == .thisMonth,
+            sortOrderRaw: sortOrder.rawValue,
+            filter: filter,
+            txSignature: store.transactionsSignature,
+            monthKey: Store.monthKey(store.selectedMonth)
+        )
+    }
+
+    private func recomputeFiltered() {
         let sourceTx = searchScope == .thisMonth
             ? Analytics.monthTransactions(store: store)
             : store.transactions
 
-        // Text search
         var out = sourceTx
         let trimmed = search.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
-            let s = trimmed.lowercased()
-            out = out.filter { $0.note.lowercased().contains(s) || $0.category.title.lowercased().contains(s) }
+            // `range(of:options:.caseInsensitive)` does no allocation per row;
+            // the prior `.lowercased().contains` allocated two new Strings
+            // per transaction per keystroke (~1000 allocs at 500 tx).
+            out = out.filter {
+                $0.note.range(of: trimmed, options: .caseInsensitive) != nil
+                || $0.category.title.range(of: trimmed, options: .caseInsensitive) != nil
+            }
         }
 
         out = filter.apply(to: out, allCategories: store.allCategories)
 
-        // Apply sort order - ultra simple
-        let result: [Transaction]
         switch sortOrder {
-        case .dateNewest:
-            result = out.sorted(by: { $0.date > $1.date })
-        case .dateOldest:
-            result = out.sorted(by: { $0.date < $1.date })
-        case .amountHighest:
-            result = out.sorted(by: { $0.amount > $1.amount })
-        case .amountLowest:
-            result = out.sorted(by: { $0.amount < $1.amount })
-        case .categoryAZ:
-            result = out.sorted(by: { $0.category.title.localizedStandardCompare($1.category.title) == .orderedAscending })
+        case .dateNewest:    out.sort { $0.date > $1.date }
+        case .dateOldest:    out.sort { $0.date < $1.date }
+        case .amountHighest: out.sort { $0.amount > $1.amount }
+        case .amountLowest:  out.sort { $0.amount < $1.amount }
+        case .categoryAZ:    out.sort { $0.category.title.localizedStandardCompare($1.category.title) == .orderedAscending }
         }
 
-        return result
+        filteredCache = out
     }
 
     // Group transactions preserving their current order, splitting when the day changes
@@ -501,6 +526,8 @@ struct TransactionsView: View {
         }
         .background(DS.Colors.bg)
         .id("\(sortOrder.rawValue)-\(filtered.count)")
+        .onAppear { recomputeFiltered() }
+        .onChange(of: filteredChangeKey) { _, _ in recomputeFiltered() }
         .onChange(of: search) { oldValue, newValue in
             // Reset to This Month when search is cleared
             if newValue.isEmpty && searchScope == .allTime {

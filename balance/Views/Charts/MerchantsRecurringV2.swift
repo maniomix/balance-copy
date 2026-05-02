@@ -19,6 +19,34 @@ struct MerchantsRecurringV2: View {
         topMerchants.map { $0.amount }.max() ?? 1
     }
 
+    /// Single pass over `store.transactions` building a `[merchantKey: [bucketID: amount]]`
+    /// map for the top merchants. Replaces the prior per-row implementation that
+    /// re-filtered the entire transaction array for every (merchant × bucket) cell —
+    /// O(N · M · B) instead of O(N + M·B).
+    private var merchantSparks: [String: [(bucket: Int, amount: Int)]] {
+        let buckets = snapshot.buckets
+        let topKeys = Set(topMerchants.map { $0.merchant })
+        guard !buckets.isEmpty, !topKeys.isEmpty else { return [:] }
+
+        var sums: [String: [Int: Int]] = [:]
+        for tx in store.transactions where tx.type == .expense {
+            let key = merchantKey(for: tx)
+            guard topKeys.contains(key) else { continue }
+            // Linear bucket scan — buckets are small (≤ ~30) and ordered.
+            for b in buckets where tx.date >= b.start && tx.date < b.end {
+                sums[key, default: [:]][b.id, default: 0] += tx.amount
+                break
+            }
+        }
+
+        var out: [String: [(bucket: Int, amount: Int)]] = [:]
+        for key in topKeys {
+            let perBucket = sums[key] ?? [:]
+            out[key] = buckets.map { ($0.id, perBucket[$0.id] ?? 0) }
+        }
+        return out
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             merchantsSection
@@ -35,18 +63,18 @@ struct MerchantsRecurringV2: View {
             if topMerchants.isEmpty {
                 ChartEmptyState(message: "No merchants in this period")
             } else {
+                let sparks = merchantSparks
                 VStack(spacing: 6) {
                     ForEach(topMerchants) { merchant in
-                        merchantRow(merchant)
+                        merchantRow(merchant, spark: sparks[merchant.merchant] ?? [])
                     }
                 }
             }
         }
     }
 
-    private func merchantRow(_ merchant: MerchantBucket) -> some View {
+    private func merchantRow(_ merchant: MerchantBucket, spark: [(bucket: Int, amount: Int)]) -> some View {
         let ratio = Double(merchant.amount) / Double(max(1, maxMerchantAmount))
-        let spark = sparkData(for: merchant)
 
         return HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
@@ -100,20 +128,6 @@ struct MerchantsRecurringV2: View {
                 .minimumScaleFactor(0.75)
         }
         .padding(.vertical, 4)
-    }
-
-    private func sparkData(for merchant: MerchantBucket) -> [(bucket: Int, amount: Int)] {
-        let buckets = snapshot.buckets
-        return buckets.map { b in
-            let sum = store.transactions
-                .filter {
-                    $0.type == .expense &&
-                    $0.date >= b.start && $0.date < b.end &&
-                    merchantKey(for: $0) == merchant.merchant
-                }
-                .reduce(0) { $0 + $1.amount }
-            return (b.id, sum)
-        }
     }
 
     private func merchantKey(for tx: Transaction) -> String {

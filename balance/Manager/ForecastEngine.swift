@@ -39,11 +39,22 @@ class ForecastEngine: ObservableObject {
 
     private init() {}
 
+    /// Last (transactionsSignature, monthKey) we generated for. Lets us
+    /// skip a recompute when the dashboard re-fires `generate` with the
+    /// same inputs (e.g. .onAppear after a month-switch already ran).
+    private var lastSignature: Int?
+
     // MARK: - Main Calculation
 
     /// Generate a complete forecast from current app state.
     /// Call this whenever data changes (transactions, budgets, recurring transactions).
     func generate(store: Store) async {
+        var hasher = Hasher()
+        hasher.combine(store.transactionsSignature)
+        hasher.combine(Store.monthKey(store.selectedMonth))
+        let signature = hasher.finalize()
+        if signature == lastSignature { return }
+
         isLoading = true
 
         // Read goal data on MainActor before detaching to background
@@ -55,6 +66,7 @@ class ForecastEngine: ObservableObject {
 
         self.forecast = result
         isLoading = false
+        self.lastSignature = signature
     }
 
     // MARK: - Pure Computation (off main thread)

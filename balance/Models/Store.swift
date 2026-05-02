@@ -1,5 +1,29 @@
 import SwiftUI
 
+// MARK: - AllCategoriesCache
+
+/// Process-wide memoization for `Store.allCategories`. The input list of
+/// custom categories rarely changes, but `allCategories` is read on every
+/// dashboard / picker / chart render. Main-thread only; not thread-safe.
+private final class AllCategoriesCache {
+    static let shared = AllCategoriesCache()
+    private var lastHash: Int?
+    private var cached: [Category] = []
+
+    func get(for custom: [CustomCategoryModel]) -> [Category] {
+        let h = custom.hashValue
+        if let last = lastHash, last == h { return cached }
+        let sorted = custom.sorted {
+            if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
+            return $0.name.lowercased() < $1.name.lowercased()
+        }
+        let result = Category.allCases + sorted.map { Category.custom($0.name) }
+        cached = result
+        lastHash = h
+        return result
+    }
+}
+
 // MARK: - Store
 
 struct Store: Hashable, Codable {
@@ -19,6 +43,15 @@ struct Store: Hashable, Codable {
     var customCategoriesWithIcons: [CustomCategoryModel] = []
     // Track deleted transactions for sync (Array for better JSON compatibility)
     var deletedTransactionIds: [String] = []  // UUID as string
+
+    /// Wall-clock time of the last successful cloud push. Used as a cutoff
+    /// to decide which transactions still need to be uploaded — only those
+    /// whose `lastModified` is newer than this point. Without this filter,
+    /// Device B's debounced push (or fullReconcile push) would re-upsert a
+    /// transaction another device just deleted, because B's `transactions`
+    /// array still contains it. Bumped to `Date()` after every successful
+    /// push by `SyncCoordinator`.
+    var lastSyncedAt: Date? = nil
 
     /// Record a transaction ID as deleted (idempotent — skips if already present).
     mutating func trackDeletion(of id: UUID) {
@@ -55,6 +88,21 @@ struct Store: Hashable, Codable {
     /// filters the queue against this set so dismissed items stay hidden.
     var dismissedReviewKeys: [String] = []
 
+    /// Cheap fingerprint of the transactions array for cache gating.
+    /// Used by `SubscriptionEngine`, `ForecastEngine`, `AIProactiveEngine`
+    /// to skip a re-run when nothing relevant changed. Hits both insertion/
+    /// deletion (count) and pure edits (latest `lastModified`). O(n) but with
+    /// trivial per-item work; called once per engine entry, not per render.
+    var transactionsSignature: Int {
+        var hasher = Hasher()
+        hasher.combine(transactions.count)
+        var latest: Date = .distantPast
+        for tx in transactions where tx.lastModified > latest { latest = tx.lastModified }
+        hasher.combine(latest)
+        hasher.combine(recurringTransactions.count)
+        return hasher.finalize()
+    }
+
     static func monthKey(_ date: Date) -> String {
         let cal = Calendar.current
         let y = cal.component(.year, from: date)
@@ -74,32 +122,66 @@ struct Store: Hashable, Codable {
 
     // MARK: - Savings
 
+    /// Cents totals for a given month, computed in a single pass.
+    /// Use `monthlySummary(for:)` when you need more than one number — it's
+    /// a single O(n) walk instead of one walk per metric.
+    struct MonthlySummary {
+        var spent: Int = 0
+        var income: Int = 0
+    }
+
+    /// Half-open month bounds [start, nextMonthStart). `>=` / `<` on `Date` is
+    /// orders of magnitude cheaper than `Calendar.isDate(_:equalTo:toGranularity:)`,
+    /// which goes through full calendar arithmetic on every comparison.
+    static func monthBounds(_ month: Date) -> (start: Date, end: Date) {
+        let cal = Calendar.current
+        let start = cal.date(from: cal.dateComponents([.year, .month], from: month)) ?? month
+        let end = cal.date(byAdding: .month, value: 1, to: start) ?? month
+        return (start, end)
+    }
+
+    /// Single-pass aggregator used by `spent` / `income` / `remaining`.
+    /// Hot path: called repeatedly per render across dashboard cards.
+    func monthlySummary(for month: Date) -> MonthlySummary {
+        let (start, end) = Self.monthBounds(month)
+        var s = MonthlySummary()
+        for tx in transactions {
+            guard tx.date >= start, tx.date < end, !tx.isTransfer else { continue }
+            switch tx.type {
+            case .expense: s.spent += tx.amount
+            case .income:  s.income += tx.amount
+            }
+        }
+        return s
+    }
+
     /// Total spent (expenses only) for a given month (cents). Transfer legs
     /// are excluded — moving money between own accounts is not spending.
     func spent(for month: Date) -> Int {
-        let cal = Calendar.current
-        return transactions
-            .filter {
-                cal.isDate($0.date, equalTo: month, toGranularity: .month) &&
-                $0.type == .expense && !$0.isTransfer
-            }
-            .reduce(0) { $0 + $1.amount }
+        let (start, end) = Self.monthBounds(month)
+        var total = 0
+        for tx in transactions where tx.type == .expense && !tx.isTransfer
+            && tx.date >= start && tx.date < end {
+            total += tx.amount
+        }
+        return total
     }
 
     /// Total income for a given month (cents). Transfer legs are excluded.
     func income(for month: Date) -> Int {
-        let cal = Calendar.current
-        return transactions
-            .filter {
-                cal.isDate($0.date, equalTo: month, toGranularity: .month) &&
-                $0.type == .income && !$0.isTransfer
-            }
-            .reduce(0) { $0 + $1.amount }
+        let (start, end) = Self.monthBounds(month)
+        var total = 0
+        for tx in transactions where tx.type == .income && !tx.isTransfer
+            && tx.date >= start && tx.date < end {
+            total += tx.amount
+        }
+        return total
     }
 
     /// Remaining (budget + income - spent) for a given month (cents).
     func remaining(for month: Date) -> Int {
-        budget(for: month) + income(for: month) - spent(for: month)
+        let s = monthlySummary(for: month)
+        return budget(for: month) + s.income - s.spent
     }
 
     /// "Saved" is positive remainder only (never negative).
@@ -295,12 +377,13 @@ struct Store: Hashable, Codable {
     /// `customCategoryNames` is kept for back-compat (legacy persistence + backups)
     /// and is migrated into the icon-bearing list on load — see
     /// `migrateCustomCategoriesIfNeeded()`. Phase 7 will delete the old field.
+    ///
+    /// Result is memoized in `AllCategoriesCache` keyed by the input list's
+    /// hash. ~26 call sites across the app; without the cache each one
+    /// re-sorts + re-maps on every read (and the dashboard filter at
+    /// `DashboardView:1265` calls it inside a `.filter` per render).
     var allCategories: [Category] {
-        let sorted = customCategoriesWithIcons.sorted {
-            if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
-            return $0.name.lowercased() < $1.name.lowercased()
-        }
-        return Category.allCases + sorted.map { Category.custom($0.name) }
+        AllCategoriesCache.shared.get(for: customCategoriesWithIcons)
     }
 
     /// One-way migration: any name in the legacy `customCategoryNames` list that

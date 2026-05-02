@@ -68,9 +68,12 @@ struct ConsecutiveDayGroup: Identifiable {
 extension Analytics {
 
     static func monthTransactions(store: Store) -> [Transaction] {
-        let cal = Calendar.current
+        // `Calendar.isDate(_:equalTo:toGranularity:.month)` is ~10x slower
+        // than half-open range comparison; use the same `Store.monthBounds`
+        // helper the rest of the hot path now uses.
+        let (start, end) = Store.monthBounds(store.selectedMonth)
         return store.transactions
-            .filter { cal.isDate($0.date, equalTo: store.selectedMonth, toGranularity: .month) }
+            .filter { $0.date >= start && $0.date < end }
             .sorted { $0.date > $1.date }
     }
 
@@ -258,13 +261,25 @@ extension Analytics {
             .sorted { $0.total > $1.total }
     }
 
+    /// Locale-aware cached DateFormatter for day-group titles. Building a
+    /// `DateFormatter` is expensive (~ms); the previous code allocated one
+    /// per `groupedByDay` call, and that ran on every transactions-list
+    /// re-render. The cache invalidates if the user's current locale changes.
+    private static var cachedDayFormatter: (locale: Locale, fmt: DateFormatter)?
+    private static func dayFormatter() -> DateFormatter {
+        let locale = Locale.current
+        if let c = cachedDayFormatter, c.locale == locale { return c.fmt }
+        let fmt = DateFormatter()
+        fmt.locale = locale
+        fmt.setLocalizedDateFormatFromTemplate("EEEE, MMM d")
+        cachedDayFormatter = (locale, fmt)
+        return fmt
+    }
+
     static func groupedByDay(_ tx: [Transaction], ascending: Bool = false) -> [DayGroup] {
         let cal = Calendar.current
         let groups = Dictionary(grouping: tx) { cal.startOfDay(for: $0.date) }
-
-        let fmt = DateFormatter()
-        fmt.locale = .current
-        fmt.setLocalizedDateFormatFromTemplate("EEEE, MMM d")
+        let fmt = dayFormatter()
 
         return groups
             .map { (day, items) in
