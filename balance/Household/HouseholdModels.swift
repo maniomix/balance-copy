@@ -222,11 +222,72 @@ enum HouseholdRole: String, Codable, CaseIterable, Hashable {
 
 // MARK: - Share Status
 
-/// Lifecycle of a split expense's share. Placeholder for future
-/// partial-settlement states. For v1 it mirrors `SplitExpense.isSettled`.
+/// Lifecycle of one member's share of a split expense.
+/// `.waived` = forgiven; counts as settled for balance math.
 enum ShareStatus: String, Codable, Hashable {
     case owed
     case settled
+    case waived
+}
+
+// MARK: - Expense Share (Household Rebuild — per-share row)
+
+/// Method used to compute a member's share amount.
+enum ExpenseSplitMethod: String, Codable, Hashable {
+    case equal      // amount = total / memberCount (remainder to payer)
+    case percent    // amount = total * percent / 100
+    case exact      // amount is set directly in cents
+    case shares     // weighted: amount = total * weight / Σweights
+}
+
+/// One member's portion of a shared transaction. Replaces the per-transaction
+/// `SplitExpense` aggregate; many `ExpenseShare`s map to a single
+/// `transactionId`. Sum of `amount` across shares for one transaction == the
+/// transaction total.
+struct ExpenseShare: Identifiable, Codable, Hashable {
+    let id: UUID
+    var householdId: UUID
+    var transactionId: UUID
+    var memberId: UUID
+    var paidByMemberId: UUID
+    var amount: Int                   // cents this member owes (≥ 0)
+    var percent: Double?              // 0…100; only set when method == .percent
+    var method: ExpenseSplitMethod
+    var status: ShareStatus
+    var createdAt: Date
+    var settledAt: Date?
+    var settlementId: UUID?
+
+    init(
+        id: UUID = UUID(),
+        householdId: UUID,
+        transactionId: UUID,
+        memberId: UUID,
+        paidByMemberId: UUID,
+        amount: Int,
+        percent: Double? = nil,
+        method: ExpenseSplitMethod = .equal,
+        status: ShareStatus = .owed,
+        createdAt: Date = Date(),
+        settledAt: Date? = nil,
+        settlementId: UUID? = nil
+    ) {
+        self.id = id
+        self.householdId = householdId
+        self.transactionId = transactionId
+        self.memberId = memberId
+        self.paidByMemberId = paidByMemberId
+        self.amount = amount
+        self.percent = percent
+        self.method = method
+        self.status = status
+        self.createdAt = createdAt
+        self.settledAt = settledAt
+        self.settlementId = settlementId
+    }
+
+    /// `.waived` is treated as closed for balance math; only `.owed` is open.
+    var isOpen: Bool { status == .owed }
 }
 
 // MARK: - Shared Budget
@@ -411,8 +472,18 @@ struct Settlement: Identifiable, Codable, Hashable {
     var amount: Int                   // cents
     var note: String
     var date: Date
-    var relatedExpenseIds: [UUID]     // which SplitExpenses are being settled
+    /// Legacy: SplitExpense IDs that were closed by this settlement.
+    /// Kept for back-compat decoding; new code reads `closedShareIds`.
+    var relatedExpenseIds: [UUID]
+    /// New (Household Rebuild): ExpenseShare IDs closed by this settlement.
+    var closedShareIds: [UUID]
     var createdAt: Date
+    /// Tombstone — `unsettle` sets this; balance math filters `deletedAt == nil`.
+    var deletedAt: Date?
+    /// P8.3 — when the settle-up sheet's "Also record as a transaction"
+    /// toggle is on, the engine creates a real ledger Transaction and stores
+    /// its id here. nil for v1 (toggle hidden in UI until P8b lands).
+    var linkedTransactionId: UUID?
 
     init(
         id: UUID = UUID(),
@@ -423,7 +494,10 @@ struct Settlement: Identifiable, Codable, Hashable {
         note: String = "Settlement",
         date: Date = Date(),
         relatedExpenseIds: [UUID] = [],
-        createdAt: Date = Date()
+        closedShareIds: [UUID] = [],
+        createdAt: Date = Date(),
+        deletedAt: Date? = nil,
+        linkedTransactionId: UUID? = nil
     ) {
         self.id = id
         self.householdId = householdId
@@ -433,8 +507,36 @@ struct Settlement: Identifiable, Codable, Hashable {
         self.note = note
         self.date = date
         self.relatedExpenseIds = relatedExpenseIds
+        self.closedShareIds = closedShareIds
         self.createdAt = createdAt
+        self.deletedAt = deletedAt
+        self.linkedTransactionId = linkedTransactionId
     }
+
+    enum CodingKeys: String, CodingKey {
+        case id, householdId, fromUserId, toUserId, amount, note, date
+        case relatedExpenseIds, closedShareIds, createdAt, deletedAt
+        case linkedTransactionId
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        householdId = try c.decode(UUID.self, forKey: .householdId)
+        fromUserId = try c.decode(String.self, forKey: .fromUserId)
+        toUserId = try c.decode(String.self, forKey: .toUserId)
+        amount = try c.decode(Int.self, forKey: .amount)
+        note = (try? c.decode(String.self, forKey: .note)) ?? "Settlement"
+        date = try c.decode(Date.self, forKey: .date)
+        relatedExpenseIds = (try? c.decode([UUID].self, forKey: .relatedExpenseIds)) ?? []
+        closedShareIds = (try? c.decode([UUID].self, forKey: .closedShareIds)) ?? []
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        deletedAt = try? c.decode(Date?.self, forKey: .deletedAt)
+        linkedTransactionId = try? c.decode(UUID?.self, forKey: .linkedTransactionId)
+    }
+
+    /// Active = not tombstoned. Balance math should filter on this.
+    var isActive: Bool { deletedAt == nil }
 }
 
 // MARK: - Household Invite

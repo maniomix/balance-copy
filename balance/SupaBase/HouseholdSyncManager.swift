@@ -21,11 +21,56 @@ extension SupabaseManager {
     // MARK: - Snapshot DTO
 
     private struct HouseholdSnapshotDTO: Codable {
+        // v1: legacy shape with `splitExpenses` aggregate.
+        // v2: adds `expenseShares` (per-share rows) + `pendingInvites`
+        // (P6.1). Transition writes both legacy and new fields so older
+        // clients keep working; reads detect the version and expand v1
+        // payloads on the fly via HouseholdShareExpansion.
+        var schema_version: Int = 2
         let household: Household?
         let splitExpenses: [SplitExpense]
+        let expenseShares: [ExpenseShare]
         let settlements: [Settlement]
         let sharedBudgets: [SharedBudget]
         let sharedGoals: [SharedGoal]
+        let pendingInvites: [HouseholdInvite]
+
+        enum CodingKeys: String, CodingKey {
+            case schema_version, household, splitExpenses, expenseShares
+            case settlements, sharedBudgets, sharedGoals, pendingInvites
+        }
+
+        init(
+            schema_version: Int = 2,
+            household: Household?,
+            splitExpenses: [SplitExpense],
+            expenseShares: [ExpenseShare] = [],
+            settlements: [Settlement],
+            sharedBudgets: [SharedBudget],
+            sharedGoals: [SharedGoal],
+            pendingInvites: [HouseholdInvite] = []
+        ) {
+            self.schema_version = schema_version
+            self.household = household
+            self.splitExpenses = splitExpenses
+            self.expenseShares = expenseShares
+            self.settlements = settlements
+            self.sharedBudgets = sharedBudgets
+            self.sharedGoals = sharedGoals
+            self.pendingInvites = pendingInvites
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            schema_version = (try? c.decode(Int.self, forKey: .schema_version)) ?? 1
+            household = try? c.decode(Household.self, forKey: .household)
+            splitExpenses = (try? c.decode([SplitExpense].self, forKey: .splitExpenses)) ?? []
+            expenseShares = (try? c.decode([ExpenseShare].self, forKey: .expenseShares)) ?? []
+            settlements = (try? c.decode([Settlement].self, forKey: .settlements)) ?? []
+            sharedBudgets = (try? c.decode([SharedBudget].self, forKey: .sharedBudgets)) ?? []
+            sharedGoals = (try? c.decode([SharedGoal].self, forKey: .sharedGoals)) ?? []
+            pendingInvites = (try? c.decode([HouseholdInvite].self, forKey: .pendingInvites)) ?? []
+        }
     }
 
     private struct HSRow: Codable {
@@ -41,7 +86,9 @@ extension SupabaseManager {
         splitExpenses: [SplitExpense],
         settlements: [Settlement],
         sharedBudgets: [SharedBudget],
-        sharedGoals: [SharedGoal]
+        sharedGoals: [SharedGoal],
+        expenseShares: [ExpenseShare] = [],
+        pendingInvites: [HouseholdInvite] = []
     ) async throws {
         guard let userId = currentUser?.id.uuidString else { return }
 
@@ -49,14 +96,21 @@ extension SupabaseManager {
         var fullHousehold = household
         fullHousehold.members = members
 
+        // Transition behaviour: write BOTH legacy `splitExpenses` and new
+        // `expenseShares` so older clients keep reading. Once P3.3 lands and
+        // the manager pushes shares as source of truth, the legacy field can
+        // be derived from shares before push.
         let row = HSRow(
             owner_id: userId,
             snapshot: HouseholdSnapshotDTO(
+                schema_version: 2,
                 household: fullHousehold,
                 splitExpenses: splitExpenses,
+                expenseShares: expenseShares,
                 settlements: settlements,
                 sharedBudgets: sharedBudgets,
-                sharedGoals: sharedGoals
+                sharedGoals: sharedGoals,
+                pendingInvites: pendingInvites
             )
         )
         try await client
@@ -76,12 +130,27 @@ extension SupabaseManager {
             .execute()
             .value
         guard let snap = rows.first?.snapshot, let h = snap.household else { return nil }
+
+        // v1 → v2 expansion: if the snapshot was written by an older client
+        // (no `expenseShares` field), expand legacy splitExpenses into shares
+        // using the same rules the new engine writes with. Local store gets
+        // the expanded list; legacy field stays untouched until the next push.
+        let shares: [ExpenseShare]
+        if snap.expenseShares.isEmpty && !snap.splitExpenses.isEmpty {
+            shares = HouseholdShareExpansion.expand(snap.splitExpenses, members: h.members)
+            SecureLogger.info("Household snapshot v1→v2: expanded \(snap.splitExpenses.count) expenses into \(shares.count) shares")
+        } else {
+            shares = snap.expenseShares
+        }
+
         return HouseholdCloudData(
             household: h,
             splitExpenses: snap.splitExpenses,
             settlements: snap.settlements,
             sharedBudgets: snap.sharedBudgets,
-            sharedGoals: snap.sharedGoals
+            sharedGoals: snap.sharedGoals,
+            expenseShares: shares,
+            pendingInvites: snap.pendingInvites
         )
     }
 
@@ -140,4 +209,8 @@ struct HouseholdCloudData {
     let settlements: [Settlement]
     let sharedBudgets: [SharedBudget]
     let sharedGoals: [SharedGoal]
+    /// Per-share rows. Either decoded directly from a v2 snapshot or expanded
+    /// from `splitExpenses` when the snapshot is v1.
+    let expenseShares: [ExpenseShare]
+    let pendingInvites: [HouseholdInvite]
 }

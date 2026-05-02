@@ -26,13 +26,23 @@ class HouseholdManager: ObservableObject {
     @Published var household: Household?
     @Published var sharedBudgets: [SharedBudget] = []
     @Published var splitExpenses: [SplitExpense] = []
+    /// Per-share rows derived from `splitExpenses` via
+    /// `HouseholdShareExpansion`. Maintained automatically on save/load. New
+    /// code should read this; legacy code can keep reading `splitExpenses`.
+    /// IDs are NOT stable across rebuilds in P3 — references should still go
+    /// through `splitExpenses` until the next phase.
+    @Published var expenseShares: [ExpenseShare] = []
     @Published var settlements: [Settlement] = []
     @Published var sharedGoals: [SharedGoal] = []
     @Published var pendingInvites: [HouseholdInvite] = []
     @Published var isLoading: Bool = false
     @Published var isSyncing: Bool = false
 
-    private var userId: String = ""
+    /// `internal` (was `private`) so the P5.2 `HouseholdManager+Engine`
+    /// extension can re-validate owner-only operations without going through
+    /// the legacy void methods (which would create call-site overload
+    /// ambiguity with the engine-protocol `-> Bool` variants).
+    var userId: String = ""
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private let supabase = SupabaseManager.shared
@@ -52,6 +62,7 @@ class HouseholdManager: ObservableObject {
         settlements = loadData("settlements_\(userId)") ?? []
         sharedGoals = loadData("shared_goals_\(userId)") ?? []
         pendingInvites = loadData("household_invites_\(userId)") ?? []
+        rebuildShares()
 
         // Then pull from cloud in background (cloud-authoritative)
         Task { await pullFromCloud() }
@@ -59,6 +70,7 @@ class HouseholdManager: ObservableObject {
 
     func save() {
         guard !userId.isEmpty else { return }
+        rebuildShares()
         // Always save locally first (instant, offline-safe)
         saveData(household, key: "household_\(userId)")
         saveData(sharedBudgets, key: "shared_budgets_\(userId)")
@@ -69,6 +81,16 @@ class HouseholdManager: ObservableObject {
 
         // Push to cloud in background (non-blocking)
         Task { await pushToCloud() }
+    }
+
+    /// Recompute `expenseShares` from `splitExpenses` using the spec's v1→v2
+    /// expansion. Idempotent. Called from save/load and after pullFromCloud.
+    private func rebuildShares() {
+        guard let h = household else {
+            expenseShares = []
+            return
+        }
+        expenseShares = HouseholdShareExpansion.expand(splitExpenses, members: h.members)
     }
 
     // ============================================================
@@ -463,6 +485,7 @@ class HouseholdManager: ObservableObject {
         let paid = settlements
             .filter {
                 $0.householdId == h.id
+                    && $0.isActive
                     && $0.fromUserId == debtor
                     && $0.toUserId == creditor
             }
@@ -552,15 +575,63 @@ class HouseholdManager: ObservableObject {
             if remaining <= 0 { break }
         }
 
+        // Derive ExpenseShare IDs that this settlement closes — pre-rebuild
+        // settlements only carried SplitExpense IDs. Map each settled expense
+        // to the share row owned by `fromUser` so balance math can later
+        // attribute the cash flow at share granularity.
+        let closedShares: [UUID] = expenseShares
+            .filter { share in
+                guard settledIds.contains(share.transactionId),
+                      let m = h.members.first(where: { $0.id == share.memberId })
+                else { return false }
+                return m.userId == fromUser
+            }
+            .map(\.id)
+
         let settlement = Settlement(
             householdId: h.id,
             fromUserId: fromUser,
             toUserId: toUser,
             amount: amount,
             note: note.isEmpty ? "Settlement" : note,
-            relatedExpenseIds: settledIds
+            relatedExpenseIds: settledIds,
+            closedShareIds: closedShares
         )
         settlements.append(settlement)
+        save()
+    }
+
+    /// Tombstone a settlement (sets `deletedAt`). Balance math filters out
+    /// inactive settlements. The legacy `relatedExpenseIds` link stays — the
+    /// matching SplitExpenses are flipped back to unsettled so the ledger is
+    /// consistent.
+    func unsettle(settlementId: UUID) {
+        guard let idx = settlements.firstIndex(where: { $0.id == settlementId }) else { return }
+        let s = settlements[idx]
+        guard s.isActive else { return }
+        for expenseId in s.relatedExpenseIds {
+            if let i = splitExpenses.firstIndex(where: { $0.id == expenseId }) {
+                splitExpenses[i].isSettled = false
+                splitExpenses[i].settledAt = nil
+            }
+        }
+        settlements[idx].deletedAt = Date()
+        save()
+    }
+
+    /// Transfer ownership to another active member. Owner-only. Old owner
+    /// becomes `.adult`. Required before owner self-archive.
+    func transferOwnership(toMemberId: UUID) {
+        guard var h = household else { return }
+        guard h.canEdit(userId: userId), userId == h.createdBy else { return }
+        guard let newIdx = h.members.firstIndex(where: { $0.id == toMemberId && $0.isActive }) else { return }
+        guard let oldIdx = h.members.firstIndex(where: { $0.role == .owner }) else { return }
+        guard newIdx != oldIdx else { return }
+        h.members[oldIdx].role = .adult
+        h.members[newIdx].role = .owner
+        h.createdBy = h.members[newIdx].userId
+        h.updatedAt = Date()
+        household = h
         save()
     }
 
@@ -793,6 +864,14 @@ class HouseholdManager: ObservableObject {
             settlements = cloudData.settlements
             sharedBudgets = cloudData.sharedBudgets
             sharedGoals = cloudData.sharedGoals
+            pendingInvites = cloudData.pendingInvites
+            // Prefer cloud-supplied shares (v2 snapshot or expanded v1).
+            // Fallback to local rebuild if cloud carried none.
+            if !cloudData.expenseShares.isEmpty {
+                expenseShares = cloudData.expenseShares
+            } else {
+                rebuildShares()
+            }
 
             // Persist to UserDefaults for offline access
             saveLocal()
@@ -820,7 +899,9 @@ class HouseholdManager: ObservableObject {
                 splitExpenses: splitExpenses,
                 settlements: settlements,
                 sharedBudgets: sharedBudgets,
-                sharedGoals: sharedGoals
+                sharedGoals: sharedGoals,
+                expenseShares: expenseShares,
+                pendingInvites: pendingInvites
             )
             SecureLogger.info("Household pushed to cloud")
         } catch {
