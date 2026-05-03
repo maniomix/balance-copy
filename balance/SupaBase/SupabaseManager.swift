@@ -125,7 +125,18 @@ class SupabaseManager: ObservableObject {
         SecureLogger.info("Syncing store")
         
         // Load all data
-        let transactions = try await loadTransactions(userId: userId)
+        let cloudTransactions = try await loadTransactions(userId: userId)
+
+        // CRITICAL: filter out transactions the user just deleted but that
+        // haven't been pushed to the cloud yet. Without this guard, a pull
+        // that races the 2-second debounce window will resurrect a deleted
+        // transaction in the UI — user sees the deletion "undo itself", and
+        // it'll only stay deleted on the next push cycle.
+        let pendingDeletions = Set(localStore.deletedTransactionIds.compactMap { UUID(uuidString: $0) })
+        let transactions: [Transaction] = pendingDeletions.isEmpty
+            ? cloudTransactions
+            : cloudTransactions.filter { !pendingDeletions.contains($0.id) }
+
         let budgets = try await loadBudgets(userId: userId)
         let categoryBudgets = try await loadCategoryBudgets(userId: userId)
         let customCategories = try await loadCustomCategories(userId: userId)
@@ -173,8 +184,41 @@ class SupabaseManager: ObservableObject {
         // Phase 7: legacy `customCategoryNames` is no longer rebuilt here;
         // `Store.migrateCustomCategoriesIfNeeded()` drains it on load.
 
+        // Auto-recognize incoming custom categories.
+        // A transaction can arrive tagged `.custom("Coffee")` even when
+        // the cloud `categories` table doesn't have a row for "Coffee"
+        // yet (e.g. macOS CSV import created it locally but the
+        // category-sync push hasn't landed yet, or iOS pulled the tx
+        // before the category). Without this, "Coffee" wouldn't appear
+        // in iOS's category picker — the user would see the tag on the
+        // tx but couldn't pick "Coffee" elsewhere.
+        //
+        // Matches macOS's behaviour: unknown categories are auto-
+        // created from the data, not fallen-back-to-Other. The next
+        // saveStore push propagates these new locals back to cloud so
+        // every device converges.
+        let knownCustomNames = Set(syncedStore.customCategoriesWithIcons.map { $0.name.lowercased() })
+        var unseenNames: [String] = []
+        var unseenSet = Set<String>()
+        for tx in syncedStore.transactions {
+            if case .custom(let name) = tx.category {
+                let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                let key = trimmed.lowercased()
+                guard !trimmed.isEmpty,
+                      !knownCustomNames.contains(key),
+                      !unseenSet.contains(key) else { continue }
+                unseenSet.insert(key)
+                unseenNames.append(trimmed)
+            }
+        }
+        if !unseenNames.isEmpty {
+            for name in unseenNames {
+                syncedStore.addCustomCategory(name: name)
+            }
+            SecureLogger.info("Auto-created \(unseenNames.count) custom categor(y/ies) from incoming transactions")
+        }
 
-        SecureLogger.info("Store synced: \(transactions.count) transactions, \(recurringTransactions.count) recurring, \(customCategories.count) custom categories")
+        SecureLogger.info("Store synced: \(transactions.count) transactions, \(recurringTransactions.count) recurring, \(customCategories.count) custom categories\(unseenNames.isEmpty ? "" : " (+\(unseenNames.count) auto-created)")")
         return syncedStore
     }
     
@@ -186,21 +230,33 @@ class SupabaseManager: ObservableObject {
         
         SecureLogger.debug("Saving store")
         
-        // 1. Hard delete removed transactions from Supabase
-        for deletedId in store.deletedTransactionIds {
-            if let uuid = UUID(uuidString: deletedId) {
-                do {
-                    try await deleteTransaction(uuid)
-                    SecureLogger.debug("Deleted transaction")
-                } catch {
-                    SecureLogger.error("Failed to delete transaction")
-                }
-            }
+        // 1. Hard delete removed transactions from Supabase.
+        // **Errors propagate** so SyncCoordinator marks the push as failed and
+        // keeps `deletedTransactionIds` populated for the next retry. Without
+        // this, a swallowed error would lead SyncCoordinator to clear the
+        // deletion markers, making the deletion impossible to ever propagate
+        // — the local row was already gone, but the cloud row would live
+        // forever and resurrect on the next pull.
+        let pendingIds: [UUID] = store.deletedTransactionIds.compactMap(UUID.init(uuidString:))
+        if !pendingIds.isEmpty {
+            try await TransactionRepository.shared.deleteMany(ids: pendingIds)
+            SecureLogger.info("Deleted \(pendingIds.count) transaction(s) from cloud")
         }
         
-        // 2. Save all active transactions
-        for transaction in store.transactions {
-            try await saveTransaction(transaction, userId: userId)
+        // 2. Upsert only transactions modified locally since the last
+        // successful sync. Without this, we'd blanket-upsert *every*
+        // transaction on every push — which would re-insert any transaction
+        // another device deleted in the meantime, because we still have it
+        // in our in-memory store.
+        //
+        // First-ever push (lastSyncedAt == nil) → upserts everything.
+        let cutoff = store.lastSyncedAt ?? .distantPast
+        let dirtyTransactions = store.transactions.filter { $0.lastModified > cutoff }
+        if !dirtyTransactions.isEmpty {
+            try await TransactionRepository.shared.upsertMany(dirtyTransactions)
+            SecureLogger.info("Upserted \(dirtyTransactions.count) of \(store.transactions.count) transaction(s) (cutoff: \(cutoff))")
+        } else if !store.transactions.isEmpty {
+            SecureLogger.debug("No dirty transactions to upsert (\(store.transactions.count) total, all unchanged since last sync)")
         }
         
         // 3+4. Budgets — delegated to BudgetManager (handles delete-missing + upsert).
@@ -315,6 +371,9 @@ class SupabaseManager: ObservableObject {
 
     func stopRealtimeSync() {
         realtimeDebounce?.cancel()
+        realtimeDebounce = nil
+        realtimeCycleActive = false
+        realtimePullPending = false
         for t in realtimeStreamTasks { t.cancel() }
         realtimeStreamTasks.removeAll()
         if let channel = realtimeChannel {
@@ -324,23 +383,64 @@ class SupabaseManager: ObservableObject {
         SecureLogger.debug("Realtime: stopped")
     }
 
+    /// Realtime cycle scheduling state. Replaces the old
+    /// cancel-and-restart debounce that starved during bursts of
+    /// macOS pushes — every postgres_changes event reset the timer,
+    /// so during a heavy CSV upload (~10s of chunked events) the pull
+    /// never fired and the user had to relaunch to see new data.
+    /// New rules mirror macOS CloudSyncCoordinator's queue pattern:
+    ///   • `realtimeCycleActive` guards against concurrent cycles.
+    ///   • Events arriving WHILE a cycle runs raise
+    ///     `realtimePullPending`; the cycle re-fires itself on
+    ///     completion if the flag is set.
+    ///   • Events arriving while the debounce timer is already
+    ///     scheduled are coalesced (no-op).
+    private var realtimeCycleActive = false
+    private var realtimePullPending = false
+
     private func scheduleRealtimeRefresh(onUpdate: @escaping () -> Void) {
-        realtimeDebounce?.cancel()
-        realtimeDebounce = Task { @MainActor [weak self] in
-            // 2.5 s — slightly longer than ContentView's 2 s save debounce,
-            // so a fresh local edit gets uploaded before the realtime pull
-            // overwrites it. Combined with `fullReconcile` (push-then-pull)
-            // in the callback, this closes the most common data-loss race.
-            try? await Task.sleep(nanoseconds: 2_500_000_000)
-            guard !Task.isCancelled else { return }
-            // Pull blob-state syncs in parallel before the store refresh.
-            await SubscriptionStateSync.pull()
-            await SavedFilterPresetSync.pull()
-            await AIStateSync.pull()
-            // Caller (ContentView) re-pulls store via SyncCoordinator.
-            onUpdate()
-            _ = self
+        // Cycle in flight → flag a re-run after it completes.
+        if realtimeCycleActive {
+            realtimePullPending = true
+            return
         }
+        // Debounce already armed → coalesce; the upcoming run picks
+        // up everything that has changed.
+        if realtimeDebounce != nil { return }
+
+        realtimeDebounce = Task { @MainActor [weak self] in
+            // 800 ms — long enough to coalesce the typical postgres
+            // fan-out from one local save (server fans out faster than
+            // that) but short enough that a single iOS edit lands on
+            // macOS in well under a second. Was 2.5 s; reducing it
+            // alone doesn't break starvation, the queue pattern does.
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard let self else { return }
+            self.realtimeDebounce = nil
+            await self.runRealtimeCycle(onUpdate: onUpdate)
+        }
+    }
+
+    /// One non-overlapping realtime cycle: blob-state pulls in
+    /// parallel, then `onUpdate` (which re-pulls the store via
+    /// SyncCoordinator). Sets `realtimeCycleActive` so concurrent
+    /// triggers don't pile on, and re-fires itself if events arrived
+    /// during execution.
+    private func runRealtimeCycle(onUpdate: @escaping () -> Void) async {
+        realtimeCycleActive = true
+        defer {
+            realtimeCycleActive = false
+            // Re-fire if events came in mid-cycle so we never miss
+            // anything. One extra cycle at most — it'll catch up.
+            if realtimePullPending {
+                realtimePullPending = false
+                scheduleRealtimeRefresh(onUpdate: onUpdate)
+            }
+        }
+        await SubscriptionStateSync.pull()
+        await SavedFilterPresetSync.pull()
+        await AIStateSync.pull()
+        onUpdate()
     }
     
     // MARK: - Analytics  (Phase 5.10 — writes to public.app_events)

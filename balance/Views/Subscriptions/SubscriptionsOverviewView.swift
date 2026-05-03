@@ -51,14 +51,12 @@ struct SubscriptionsOverviewView: View {
             ZStack {
                 DS.Colors.bg.ignoresSafeArea()
 
-                if engine.subscriptions.isEmpty && engine.hiddenSubscriptions.isEmpty && !engine.isLoading {
-                    // No records at all — true empty state.
+                if engine.subscriptions.isEmpty && !engine.isLoading {
+                    // No records at all — true empty state. (Hidden
+                    // section was retired; we no longer count
+                    // `hiddenSubscriptions` toward "has records".)
                     emptyState
                 } else {
-                    // Even if every visible record is hidden, render the
-                    // page so the Hidden section is reachable from
-                    // sectionedList. Phase 10 — guards against the user
-                    // hiding everything and getting "stuck."
                     ScrollView {
                         VStack(spacing: 16) {
                             summaryCard
@@ -470,12 +468,13 @@ struct SubscriptionsOverviewView: View {
             sectionView(title: "Trials", subs: trialSubs)
             sectionView(title: "Paused", subs: pausedSubs)
             sectionView(title: "Cancelled", subs: cancelledSubs)
-            sectionView(title: "Hidden", subs: hiddenSubs, isHiddenSection: true)
+            // Hidden section retired — users now permanently delete a
+            // subscription from its detail view instead of stashing it.
         }
     }
 
     @ViewBuilder
-    private func sectionView(title: String, subs: [DetectedSubscription], isHiddenSection: Bool = false) -> some View {
+    private func sectionView(title: String, subs: [DetectedSubscription]) -> some View {
         if !subs.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 6) {
@@ -492,61 +491,19 @@ struct SubscriptionsOverviewView: View {
                 .padding(.horizontal)
 
                 ForEach(subs) { sub in
-                    if isHiddenSection {
-                        hiddenRow(sub)
-                    } else {
-                        NavigationLink(destination: SubscriptionDetailView(subscription: sub, store: $store)) {
-                            subscriptionRow(sub)
-                        }
-                        .buttonStyle(.plain)
+                    NavigationLink(destination: SubscriptionDetailView(subscription: sub, store: $store)) {
+                        subscriptionRow(sub)
                     }
+                    .buttonStyle(.plain)
                 }
             }
         }
     }
-
-    /// Hidden-section row: shows the same content as a regular row but
-    /// swaps the chevron for an "Unhide" button, since tapping into the
-    /// detail view doesn't make sense for a hidden record.
-    private func hiddenRow(_ sub: DetectedSubscription) -> some View {
-        DS.Card {
-            HStack(spacing: 14) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(DS.Colors.subtext.opacity(0.12))
-                        .frame(width: 42, height: 42)
-                    Image(systemName: CategoryRegistry.shared.icon(for: sub.category))
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(DS.Colors.subtext)
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(sub.merchantName.capitalized)
-                        .font(.system(size: 15, weight: .semibold, design: .rounded))
-                        .foregroundStyle(DS.Colors.text)
-                        .lineLimit(1)
-                    Text("\(DS.Format.currencySymbol())\(DS.Format.currency(sub.expectedAmount)) · \(sub.billingCycle.displayName)")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(DS.Colors.subtext)
-                }
-                Spacer()
-                Button {
-                    Haptics.selection()
-                    engine.unhideSubscription(sub)
-                } label: {
-                    Text("Unhide")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(DS.Colors.accent)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(DS.Colors.accent.opacity(0.12), in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Unhide \(sub.merchantName)")
-            }
-        }
-        .padding(.horizontal)
-        .opacity(0.85)
-    }
+    // `hiddenRow` and the `isHiddenSection` flag retired with the
+    // hide/unhide model. `engine.unhideSubscription(_:)` is gone — the
+    // remaining `engine.removeSubscription(_:)` shim now redirects to
+    // `deleteSubscription(_:)` (deprecation-flagged for callers we
+    // haven't swept yet).
 
     // MARK: - Section bucketers
 
@@ -568,9 +525,9 @@ struct SubscriptionsOverviewView: View {
         sortedFor(engine.subscriptions.filter { $0.status == .cancelled })
     }
 
-    private var hiddenSubs: [DetectedSubscription] {
-        sortedFor(engine.hiddenSubscriptions)
-    }
+    // Hidden bucket retired with the hide/unhide model — see
+    // SubscriptionEngine.republish() for the one-shot hiddenKeys
+    // migration that runs on first launch after the change.
 
     /// Apply the current sort option to a subscription bucket.
     private func sortedFor(_ list: [DetectedSubscription]) -> [DetectedSubscription] {
@@ -795,15 +752,15 @@ private struct InsightDetailSheet: View {
                         .foregroundStyle(DS.Colors.accent)
                 }
             }
-            .alert("Remove Subscription?", isPresented: $showRemoveAlert) {
+            .alert("Delete Subscription?", isPresented: $showRemoveAlert) {
                 Button("Cancel", role: .cancel) {}
-                Button("Remove", role: .destructive) {
+                Button("Delete", role: .destructive) {
                     if let sub = subToRemove {
-                        engine.removeSubscription(sub)
+                        engine.deleteSubscription(sub)
                     }
                 }
             } message: {
-                Text("This subscription will be removed from tracking. It may be re-detected later.")
+                Text("This subscription will be permanently deleted. If it appears in your transactions again, auto-detection may re-add it.")
             }
         }
     }

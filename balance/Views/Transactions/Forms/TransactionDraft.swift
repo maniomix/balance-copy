@@ -83,6 +83,9 @@ struct TransactionDraft {
     var type: TransactionType
     var category: Category
     var date: Date
+    /// Merchant / payee — primary row title. Optional; falls back to category
+    /// title at display time when empty.
+    var name: String
     var note: String
 
     // Details
@@ -142,6 +145,7 @@ struct TransactionDraft {
             type: type,
             category: type == .income ? .other : .groceries,
             date: date,
+            name: "",
             note: type == .income ? "Income" : "",
             paymentMethod: .card,
             accountId: accountId,
@@ -164,6 +168,7 @@ struct TransactionDraft {
             type: tx.type,
             category: tx.category,
             date: tx.date,
+            name: tx.name,
             note: tx.note,
             paymentMethod: tx.paymentMethod,
             accountId: tx.accountId,
@@ -185,6 +190,7 @@ struct TransactionDraft {
             amount: amountCents,
             date: date,
             category: category,
+            name: name,
             note: note,
             paymentMethod: paymentMethod,
             type: type,
@@ -254,6 +260,7 @@ struct TransactionDraftDiff: Equatable {
     var typeChanged: Bool
     var categoryChanged: Bool
     var dateChanged: Bool
+    var nameChanged: Bool
     var noteChanged: Bool
     var paymentMethodChanged: Bool
     var accountChanged: Bool
@@ -262,7 +269,7 @@ struct TransactionDraftDiff: Equatable {
 
     var isEmpty: Bool {
         !(amountChanged || typeChanged || categoryChanged || dateChanged ||
-          noteChanged || paymentMethodChanged || accountChanged ||
+          nameChanged || noteChanged || paymentMethodChanged || accountChanged ||
           goalChanged || attachmentChanged)
     }
 
@@ -272,6 +279,7 @@ struct TransactionDraftDiff: Equatable {
             typeChanged:          original.type != draft.type,
             categoryChanged:      original.category != draft.category,
             dateChanged:          original.date != draft.date,
+            nameChanged:          original.name != draft.name,
             noteChanged:          original.note != draft.note,
             paymentMethodChanged: original.paymentMethod != draft.paymentMethod,
             accountChanged:       original.accountId != draft.accountId,
@@ -327,6 +335,7 @@ final class TransactionDraftStore: ObservableObject {
         case .add:
             // For adds, "dirty" means the user has typed an amount or note.
             return !draft.amountText.isEmpty
+                || !draft.name.isEmpty
                 || !draft.note.isEmpty
                 || draft.attachmentData != nil
         case .edit(let original):

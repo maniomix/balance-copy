@@ -77,15 +77,15 @@ struct SubscriptionDetailView: View {
         } message: {
             Text("This marks '\(liveSub.merchantName.capitalized)' as cancelled. You'll need to actually cancel with the provider separately.")
         }
-        .alert("Hide Subscription?", isPresented: $showDeleteAlert) {
-            Button("Keep", role: .cancel) {}
-            Button("Hide", role: .destructive) {
-                engine.removeSubscription(liveSub)
+        .alert("Delete Subscription?", isPresented: $showDeleteAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                engine.deleteSubscription(liveSub)
                 Haptics.success()
                 dismiss()
             }
         } message: {
-            Text("'\(liveSub.merchantName.capitalized)' will move to the Hidden section. You can unhide it from there.")
+            Text("'\(liveSub.merchantName.capitalized)' will be permanently removed. If it appears in your transactions again, auto-detection may re-add it.")
         }
     }
 
@@ -581,7 +581,7 @@ struct SubscriptionDetailView: View {
             })
         }
 
-        tiles.append(ActionTile(label: "Hide", icon: "eye.slash.fill", tint: DS.Colors.subtext) {
+        tiles.append(ActionTile(label: "Delete", icon: "trash.fill", tint: DS.Colors.danger) {
             showDeleteAlert = true
             Haptics.medium()
         })

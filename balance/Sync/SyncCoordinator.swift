@@ -158,17 +158,21 @@ class SyncCoordinator: ObservableObject {
         do {
             try await supabase.saveStore(store)
 
-            // Clear deletedTransactionIds after successful cloud save
+            // Clear deletedTransactionIds after successful cloud save +
+            // bump lastSyncedAt so the next push won't re-upsert
+            // transactions another device may have changed since.
+            let now = Date()
             var cleaned = store
             if !cleaned.deletedTransactionIds.isEmpty {
                 SecureLogger.debug("Clearing \(cleaned.deletedTransactionIds.count) synced deletion markers")
                 cleaned.deletedTransactionIds = []
             }
+            cleaned.lastSyncedAt = now
 
             retryCount = 0
             hasDirtyLocalChanges = false
-            status = .success(Date())
-            lastSuccessfulSync = Date()
+            status = .success(now)
+            lastSuccessfulSync = now
             SecureLogger.info("Push to cloud succeeded")
             return cleaned
 
@@ -290,6 +294,7 @@ class SyncCoordinator: ObservableObject {
 
             var reconciled = cloudStore
             reconciled.deletedTransactionIds = []
+            reconciled.lastSyncedAt = Date()
 
             retryCount = 0
             needsReconnectSync = false

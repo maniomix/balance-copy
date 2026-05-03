@@ -34,6 +34,9 @@ final class TransactionRepository {
         let category_key: String?
         let amount: Int
         let occurred_at: String
+        /// Cross-platform "name" column. macOS calls it `payee`; iOS calls it
+        /// `name`; the cloud column is `merchant`.
+        let merchant: String?
         let note: String?
         let type: String              // 'expense' | 'income'
         let payment_method: String    // 'cash' | 'card'
@@ -105,11 +108,28 @@ final class TransactionRepository {
 
     func deleteMany(ids: [UUID]) async throws {
         guard !ids.isEmpty else { return }
-        try await client
-            .from("transactions")
-            .delete()
-            .in("id", values: ids.map(\.uuidString))
-            .execute()
+        let idStrings = ids.map(\.uuidString)
+        SecureLogger.info("DELETE transactions: requesting \(idStrings.count) ids — first: \(idStrings.first ?? "nil")")
+        do {
+            // `.select()` forces PostgREST to return the deleted rows in the
+            // body — that lets us VERIFY the delete actually affected rows
+            // and isn't being silently no-op'd by RLS or a stale auth token.
+            struct DeletedRow: Codable { let id: String }
+            let deleted: [DeletedRow] = try await client
+                .from("transactions")
+                .delete()
+                .in("id", values: idStrings)
+                .select("id")
+                .execute()
+                .value
+            SecureLogger.info("DELETE transactions: \(deleted.count) row(s) actually removed from cloud")
+            if deleted.count != idStrings.count {
+                SecureLogger.warning("DELETE transactions: requested \(idStrings.count) but cloud only removed \(deleted.count). RLS or stale token suspected.")
+            }
+        } catch {
+            SecureLogger.error("DELETE transactions failed: \(error.localizedDescription)")
+            throw error
+        }
     }
 
     // MARK: - Mapping
@@ -121,6 +141,7 @@ final class TransactionRepository {
             category_key: tx.category.storageKey,
             amount: tx.amount,
             occurred_at: Row.isoOut.string(from: tx.date),
+            merchant: tx.name.isEmpty ? nil : tx.name,
             note: tx.note.isEmpty ? nil : tx.note,
             type: tx.type.rawValue,
             payment_method: tx.paymentMethod.rawValue,
@@ -143,6 +164,7 @@ final class TransactionRepository {
             amount: row.amount,
             date: date,
             category: cat,
+            name: row.merchant ?? "",
             note: row.note ?? "",
             paymentMethod: pm,
             type: type,

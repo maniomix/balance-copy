@@ -6,51 +6,46 @@ struct LockScreenView: View {
 
     var body: some View {
         ZStack {
-            Color(uiColor: .systemBackground)
-                .ignoresSafeArea()
+            Color.black.ignoresSafeArea()
 
-            VStack(spacing: 28) {
+            VStack(spacing: 0) {
                 Spacer()
-
-                // App icon
-                ZStack {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(Color(uiColor: .secondarySystemBackground))
-                        .frame(width: 80, height: 80)
-
-                    Image(systemName: "chart.bar.fill")
-                        .font(.system(size: 36))
-                        .foregroundStyle(Color(uiColor: .label))
-                }
 
                 Text("CENTMOND")
-                    .font(.custom("Pacifico-Regular", size: 28))
-                    .foregroundStyle(Color(uiColor: .label))
+                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    .tracking(4)
+                    .foregroundStyle(.white)
 
-                Text("Locked")
-                    .font(.system(size: 15))
-                    .foregroundStyle(Color(uiColor: .secondaryLabel))
+                Spacer().frame(height: 80)
+
+                Image(systemName: biometricIcon)
+                    .font(.system(size: 64, weight: .light))
+                    .foregroundStyle(.white)
+
+                Spacer().frame(height: 24)
+
+                Text(statusText)
+                    .font(.system(size: 14, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.55))
 
                 Spacer()
 
-                // Unlock button
                 Button {
                     lockManager.authenticate()
                 } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: biometricIcon)
-                            .font(.system(size: 20))
-                        Text("Unlock with \(lockManager.biometricName)")
-                            .font(.system(size: 17, weight: .semibold))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 54)
-                    .background(Color(uiColor: .label))
-                    .foregroundStyle(Color(uiColor: .systemBackground))
-                    .cornerRadius(14)
+                    Text(buttonTitle)
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.black)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .background(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                .padding(.horizontal, 40)
-                .padding(.bottom, 60)
+                .buttonStyle(.plain)
+                .disabled(lockManager.isAuthenticating)
+                .opacity(lockManager.isAuthenticating ? 0.5 : 1.0)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 48)
             }
         }
         .onAppear {
@@ -60,9 +55,21 @@ struct LockScreenView: View {
 
     private var biometricIcon: String {
         switch lockManager.biometricType {
-        case .faceID: return "faceid"
+        case .faceID:  return "faceid"
         case .touchID: return "touchid"
-        default: return "lock.fill"
+        case .opticID: return "opticid"
+        default:       return "lock.fill"
         }
+    }
+
+    private var statusText: String {
+        if lockManager.isAuthenticating { return "Authenticating…" }
+        if lockManager.lastAuthFailed   { return "Authentication failed" }
+        return "Locked"
+    }
+
+    private var buttonTitle: String {
+        if lockManager.lastAuthFailed { return "Try Again" }
+        return "Unlock"
     }
 }

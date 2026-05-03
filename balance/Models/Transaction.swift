@@ -111,6 +111,11 @@ struct Transaction: Identifiable, Hashable, Codable {
     var amount: Int
     var date: Date
     var category: Category
+    /// Merchant / payee / short title shown as the row's primary line. Falls
+    /// back to category title on the row when empty. Mirrors the macOS schema
+    /// (separate `name` and `note`) so CSV imports and cross-platform sync
+    /// don't collapse two fields into one.
+    var name: String
     var note: String
     var paymentMethod: PaymentMethod
     var type: TransactionType
@@ -127,11 +132,12 @@ struct Transaction: Identifiable, Hashable, Codable {
 
     var isTransfer: Bool { transferGroupId != nil }
 
-    init(id: UUID = UUID(), amount: Int, date: Date, category: Category, note: String, paymentMethod: PaymentMethod = .card, type: TransactionType = .expense, attachmentData: Data? = nil, attachmentType: AttachmentType? = nil, accountId: UUID? = nil, isFlagged: Bool = false, linkedGoalId: UUID? = nil, lastModified: Date = Date(), transferGroupId: UUID? = nil) {
+    init(id: UUID = UUID(), amount: Int, date: Date, category: Category, name: String = "", note: String, paymentMethod: PaymentMethod = .card, type: TransactionType = .expense, attachmentData: Data? = nil, attachmentType: AttachmentType? = nil, accountId: UUID? = nil, isFlagged: Bool = false, linkedGoalId: UUID? = nil, lastModified: Date = Date(), transferGroupId: UUID? = nil) {
         self.id = id
         self.amount = amount
         self.date = date
         self.category = category
+        self.name = name
         self.note = note
         self.paymentMethod = paymentMethod
         self.type = type
@@ -145,7 +151,7 @@ struct Transaction: Identifiable, Hashable, Codable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, amount, date, category, note, paymentMethod, type, attachmentData, attachmentType, accountId, isFlagged, linkedGoalId, lastModified, transferGroupId
+        case id, amount, date, category, name, note, paymentMethod, type, attachmentData, attachmentType, accountId, isFlagged, linkedGoalId, lastModified, transferGroupId
     }
 
     init(from decoder: Decoder) throws {
@@ -154,6 +160,7 @@ struct Transaction: Identifiable, Hashable, Codable {
         amount = try container.decode(Int.self, forKey: .amount)
         date = try container.decode(Date.self, forKey: .date)
         category = try container.decode(Category.self, forKey: .category)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
         note = try container.decode(String.self, forKey: .note)
 
         // Old data compatibility

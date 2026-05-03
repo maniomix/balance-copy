@@ -131,22 +131,6 @@ struct OAuthButtons: View {
                     catch { errorMessage = error.localizedDescription }
                 }
             }
-
-            providerButton(
-                title: "Continue with Apple",
-                icon: "applelogo",
-                background: DS.Colors.text,
-                foreground: DS.Colors.bg,
-                stroke: .clear
-            ) {
-                Task {
-                    do { try await authManager.signInWithApple() }
-                    catch {
-                        // Apple may not be configured yet — surface friendly message.
-                        errorMessage = "Apple sign-in isn't available yet. Please use email or Google for now."
-                    }
-                }
-            }
         }
     }
 

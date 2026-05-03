@@ -8,6 +8,8 @@ class AppLockManager: ObservableObject {
     static let shared = AppLockManager()
 
     @Published var isLocked = false
+    @Published var isAuthenticating = false
+    @Published var lastAuthFailed = false
 
     /// Whether the user has enabled app lock in Settings.
     var isEnabled: Bool {
@@ -57,14 +59,25 @@ class AppLockManager: ObservableObject {
             return
         }
 
+        guard !isAuthenticating else { return }
+        isAuthenticating = true
+        lastAuthFailed = false
+
         Task {
+            defer { isAuthenticating = false }
             do {
                 let success = try await context.evaluatePolicy(
                     .deviceOwnerAuthenticationWithBiometrics,
                     localizedReason: "Unlock Centmond to view your finances"
                 )
-                if success { isLocked = false }
+                if success {
+                    isLocked = false
+                    lastAuthFailed = false
+                } else {
+                    lastAuthFailed = true
+                }
             } catch {
+                lastAuthFailed = true
                 SecureLogger.info("Biometric auth failed or cancelled")
             }
         }

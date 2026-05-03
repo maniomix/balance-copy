@@ -155,7 +155,13 @@ struct ContentView: View {
 
     var body: some View {
             Group {
-                if authManager.isAuthenticated {
+                if authManager.isCheckingSession {
+                    // Session restoration in progress — show launch screen
+                    // instead of flashing the login UI for users who are
+                    // already signed in.
+                    LaunchScreenView { }
+                        .transition(.opacity)
+                } else if authManager.isAuthenticated {
                     // User is logged in - show main app
                     ZStack {
                         if showLaunchScreen {
@@ -202,6 +208,8 @@ struct ContentView: View {
                         .environmentObject(authManager)
                 }
             }
+            .animation(.easeInOut(duration: 0.25), value: authManager.isCheckingSession)
+            .animation(.easeInOut(duration: 0.25), value: authManager.isAuthenticated)
             .onChange(of: authManager.currentUser?.uid) { oldValue, newValue in
                 // When user changes (login/logout/switch), load their data
                 if newValue != nil {

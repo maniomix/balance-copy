@@ -28,6 +28,7 @@ struct ImportTransactionsScreen: View {
     @State private var colDate: Int? = nil
     @State private var colAmount: Int? = nil
     @State private var colCategory: Int? = nil
+    @State private var colName: Int? = nil
     @State private var colNote: Int? = nil
     @State private var colPaymentMethod: Int? = nil  // جدید
     @State private var colType: Int? = nil  // جدید - برای income/expense
@@ -147,6 +148,7 @@ struct ImportTransactionsScreen: View {
                                 columnPicker(title: "Date", columns: parsed.columns, selection: $colDate)
                                 columnPicker(title: "Amount", columns: parsed.columns, selection: $colAmount)
                                 columnPicker(title: "Category", columns: parsed.columns, selection: $colCategory)
+                                columnPicker(title: "Name (optional - merchant/payee)", columns: parsed.columns, selection: $colName)
                                 columnPicker(title: "Type (optional - income/expense)", columns: parsed.columns, selection: $colType)
                                 columnPicker(title: "Payment Method (optional)", columns: parsed.columns, selection: $colPaymentMethod)
                                 columnPicker(title: "Note (optional)", columns: parsed.columns, selection: $colNote)
@@ -359,8 +361,10 @@ struct ImportTransactionsScreen: View {
 
         colDate = firstIndex(matching: ["date", "day", "datum"])
         colAmount = firstIndex(matching: ["amount", "value", "spent", "cost", "eur", "€"])
-        colCategory = firstIndex(matching: ["category", "cat", "type"])
-        colNote = firstIndex(matching: ["note", "description", "desc", "memo"])
+        colCategory = firstIndex(matching: ["category", "cat"])
+        colName = firstIndex(matching: ["name", "payee", "merchant", "description", "desc", "vendor", "recipient", "narrative", "reference"])
+        colNote = firstIndex(matching: ["note", "notes", "memo", "comment", "remarks", "details"])
+        colType = firstIndex(matching: ["type", "kind", "direction"])
         colPaymentMethod = firstIndex(matching: ["payment", "method", "zahlungsmethode", "cash", "card"])
     }
 
@@ -411,14 +415,19 @@ struct ImportTransactionsScreen: View {
     }
 
     private func mapCategory(_ s: String) -> Category {
-        let t = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let raw = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        let t = raw.lowercased()
         if t.isEmpty { return .other }
 
+        // 1. Exact match against existing categories (built-ins + customs).
         for c in store.allCategories {
             if c.title.lowercased() == t { return c }
             if c.storageKey.lowercased() == t { return c }
         }
 
+        // 2. Heuristic substring match against built-ins. Only for very
+        //    obvious synonyms — anything ambiguous falls through to
+        //    auto-create instead of getting silently bucketed.
         if t.contains("groc") { return .groceries }
         if t.contains("rent") { return .rent }
         if t.contains("bill") { return .bills }
@@ -427,8 +436,12 @@ struct ImportTransactionsScreen: View {
         if t.contains("edu") || t.contains("school") { return .education }
         if t.contains("dining") || t.contains("food") || t.contains("restaurant") { return .dining }
         if t.contains("shop") { return .shopping }
-        if t.contains("ent") || t.contains("movie") || t.contains("game") { return .other }
-        return .other
+
+        // 3. Auto-create. Unknown name → new custom category, not .other.
+        //    Mirrors macOS's CSV import behaviour. The next saveStore
+        //    push will propagate this to cloud + other devices.
+        store.addCustomCategory(name: raw)
+        return .custom(raw)
     }
     
     private func mapPaymentMethod(_ s: String) -> PaymentMethod {
@@ -490,20 +503,21 @@ struct ImportTransactionsScreen: View {
 
         // Build a signature set for existing transactions so we can prevent re-importing
         // the same data even if the filename differs.
-        func txSignature(date: Date, amountCents: Int, category: Category, note: String) -> String {
+        func txSignature(date: Date, amountCents: Int, category: Category, name: String, note: String) -> String {
             let day = Calendar.current.startOfDay(for: date)
             let df = DateFormatter()
             df.locale = Locale(identifier: "en_US_POSIX")
             df.dateFormat = "yyyy-MM-dd"
             let dayStr = df.string(from: day)
+            let nameNorm = name.trimmingCharacters(in: .whitespacesAndNewlines)
             let noteNorm = note.trimmingCharacters(in: .whitespacesAndNewlines)
-            return "\(dayStr)|\(amountCents)|\(category.storageKey)|\(noteNorm)"
+            return "\(dayStr)|\(amountCents)|\(category.storageKey)|\(nameNorm)|\(noteNorm)"
         }
 
         var existingSigs: Set<String> = []
         existingSigs.reserveCapacity(store.transactions.count)
         for t in store.transactions {
-            existingSigs.insert(txSignature(date: t.date, amountCents: t.amount, category: t.category, note: t.note))
+            existingSigs.insert(txSignature(date: t.date, amountCents: t.amount, category: t.category, name: t.name, note: t.note))
         }
 
         // First pass: validate + detect duplicates (against store and within the CSV)
@@ -526,11 +540,12 @@ struct ImportTransactionsScreen: View {
             if amountCents <= 0 { skipped += 1; continue }
 
             let category = mapCategory(cell(cIdx))
-            let note = (colNote == nil) ? "" : cell(colNote!)
+            let name = (colName == nil) ? "" : cell(colName!).trimmingCharacters(in: .whitespacesAndNewlines)
+            let note = (colNote == nil) ? "" : cell(colNote!).trimmingCharacters(in: .whitespacesAndNewlines)
             let paymentMethod = (colPaymentMethod == nil) ? .cash : mapPaymentMethod(cell(colPaymentMethod!))
             let type = (colType == nil) ? .expense : mapType(cell(colType!))
 
-            let sig = txSignature(date: date, amountCents: amountCents, category: category, note: note)
+            let sig = txSignature(date: date, amountCents: amountCents, category: category, name: name, note: note)
 
             // Duplicate against existing store OR repeated rows inside the CSV.
             if existingSigs.contains(sig) || newSigs.contains(sig) {
@@ -550,6 +565,7 @@ struct ImportTransactionsScreen: View {
                 amount: amountCents,
                 date: date,
                 category: category,
+                name: name,
                 note: note,
                 paymentMethod: paymentMethod,
                 type: type

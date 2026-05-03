@@ -196,7 +196,7 @@ struct TransactionRow: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Text(t.type == .income ? "Income" : t.category.title)
+                    Text(rowTitle)
                         .font(DS.Typography.body)
                         .foregroundStyle(t.type == .income ? .green : DS.Colors.text)
 
@@ -238,7 +238,7 @@ struct TransactionRow: View {
                     }
                 }
 
-                Text(t.note.isEmpty ? "\u{2014}" : t.note)
+                Text(rowSubtitle)
                     .font(DS.Typography.caption)
                     .foregroundStyle(DS.Colors.subtext)
                     .lineLimit(1)
@@ -269,5 +269,30 @@ struct TransactionRow: View {
         Image(systemName: CategoryRegistry.shared.icon(for: t.category))
             .foregroundStyle(CategoryRegistry.shared.tint(for: t.category))
             .font(.system(size: 14, weight: .semibold))
+    }
+
+    /// Primary row title: explicit name when present, else income label /
+    /// category title.
+    private var rowTitle: String {
+        let trimmed = t.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return trimmed }
+        return t.type == .income ? "Income" : t.category.title
+    }
+
+    /// Secondary row line, matching macOS: shows the category and (when
+    /// present) the note as a subtitle. When the primary line already *is*
+    /// the category (no name), the subtitle is the note alone or em-dash.
+    private var rowSubtitle: String {
+        let trimmedNote = t.note.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nameUsed = !t.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        if nameUsed {
+            // Primary = name. Subtitle = "Category · note" (or just category).
+            let cat = t.type == .income ? "Income" : t.category.title
+            return trimmedNote.isEmpty ? cat : "\(cat) · \(trimmedNote)"
+        } else {
+            // Primary = category. Show the note alone as subtitle if present.
+            return trimmedNote.isEmpty ? "\u{2014}" : trimmedNote
+        }
     }
 }

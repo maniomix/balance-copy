@@ -27,15 +27,15 @@ struct SyncStatusPill: View {
     var body: some View {
         Group {
             if let info = pillInfo {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     Image(systemName: info.icon)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 10, weight: .semibold))
                     Text(info.label)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                 }
                 .foregroundStyle(info.foreground)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
                 .background(info.background, in: Capsule())
                 .overlay(Capsule().strokeBorder(info.foreground.opacity(0.18), lineWidth: 0.5))
                 .padding(.top, 6)

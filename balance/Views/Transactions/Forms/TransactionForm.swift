@@ -74,6 +74,7 @@ struct TransactionForm: View {
                 futureDateNotice
                     .transition(.opacity)
             }
+            nameCard
             noteCard
         }
         .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.85),
@@ -605,6 +606,26 @@ struct TransactionForm: View {
                 DatePicker("", selection: $draftStore.draft.date, displayedComponents: [.date])
                     .labelsHidden()
                     .datePickerStyle(.compact)
+            }
+        }
+    }
+
+    // MARK: - Name
+
+    private var nameCard: some View {
+        DS.Card {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Name")
+                    .font(DS.Typography.caption)
+                    .foregroundStyle(DS.Colors.subtext)
+
+                TextField(
+                    draftStore.draft.type == .income ? "e.g. Acme Corp" : "e.g. Aldi",
+                    text: $draftStore.draft.name
+                )
+                .font(DS.Typography.body)
+                .padding(14)
+                .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
         }
     }
