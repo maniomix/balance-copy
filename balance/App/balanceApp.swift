@@ -33,6 +33,11 @@ struct balanceApp: App {
     }()
 
     init() {
+        // Surface missing Supabase / AI proxy config early. Logs to SecureLogger
+        // in release; without this a misconfigured release build silently boots
+        // with empty credentials and fails on every network call.
+        AppConfig.shared.validate()
+
         // If a previous run was force-quit, the system kept its Live Activity
         // alive. Tear it down on launch so a closed app never has an island.
         BudgetLiveActivityManager.shared.endAll()
