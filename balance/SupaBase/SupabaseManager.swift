@@ -399,6 +399,21 @@ class SupabaseManager: ObservableObject {
     private var realtimePullPending = false
 
     private func scheduleRealtimeRefresh(onUpdate: @escaping () -> Void) {
+        // OWN-ECHO GUARD: Postgres replication broadcasts our OWN writes
+        // back as realtime events. If we just pushed (within 3s), the
+        // event is almost certainly our own echo — pulling now risks
+        // hitting a read-replica that hasn't caught up to the primary
+        // yet, returning the OLD value, which then wins the
+        // cloud-is-authoritative merge and the user sees their edit
+        // revert. (Specifically reproduced with budget edits: type new
+        // value → save → snaps back to old → next click fixes it.)
+        // The 3s window covers typical replication lag (~10-300ms) plus
+        // the 800ms realtime debounce.
+        if let lastPush = SyncCoordinator.shared.lastSuccessfulSync,
+           Date().timeIntervalSince(lastPush) < 3.0 {
+            SecureLogger.debug("Realtime: skipping echo of own write (last push \(Int(Date().timeIntervalSince(lastPush) * 1000))ms ago)")
+            return
+        }
         // Cycle in flight → flag a re-run after it completes.
         if realtimeCycleActive {
             realtimePullPending = true
