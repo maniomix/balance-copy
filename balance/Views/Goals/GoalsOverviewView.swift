@@ -116,8 +116,16 @@ struct GoalsOverviewView: View {
                     .padding(.horizontal, 4)
                 }
 
-                if goalManager.goals.isEmpty && !goalManager.isLoading {
-                    emptyState
+                if goalManager.goals.isEmpty {
+                    if goalManager.isLoading {
+                        ProgressView()
+                            .controlSize(.large)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 60)
+                            .accessibilityLabel("Loading goals")
+                    } else {
+                        emptyState
+                    }
                 }
             }
             .padding(.horizontal, 16)

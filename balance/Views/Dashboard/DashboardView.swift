@@ -42,12 +42,35 @@ struct DashboardView: View {
         return fmt.string(from: d)
     }
 
+    /// Fan-out refresh: regenerates all dashboard-backing engines + remote
+    /// fetches in parallel. Wired to both `.onAppear` and `.refreshable`
+    /// (pull-to-refresh). SwiftUI shows the system spinner automatically
+    /// while the refreshable closure is in-flight.
+    private func refreshDashboard() async {
+        async let f: () = ForecastEngine.shared.generate(store: store)
+        async let s: () = SubscriptionEngine.shared.analyze(store: store)
+        async let r: () = ReviewEngine.shared.analyze(store: store)
+        async let a: () = AccountManager.shared.fetchAccounts()
+        async let g: () = GoalManager.shared.fetchGoals()
+        async let x: () = CurrencyConverter.shared.fetchRatesIfNeeded()
+        _ = await (f, s, r, a, g, x)
+        await WidgetDataWriter.update(store: store)
+
+        // Compute copilot features after engines are ready
+        computeCopilotData()
+
+        // Refresh AI insights + rescue mode + proactive items
+        insightEngine.refresh(store: store)
+        budgetRescue.evaluate(store: store)
+        proactiveEngine.clearStaleDismissals()
+        proactiveEngine.refresh(store: store)
+    }
+
     @State private var showDeleteMonthConfirm = false
     @State private var showTrashAlert = false
     @State private var trashAlertText = ""
     @State private var showSaveFailedAlert = false
     @State private var showPaywall = false
-    @State private var isRefreshing = false
 
     // Copilot engine state
     @State private var healthScore: HealthScoreEngine.HealthScore?
@@ -227,6 +250,9 @@ struct DashboardView: View {
                 .padding(.top, 10)
                 .padding(.bottom, 24)
             }
+            .refreshable {
+                await refreshDashboard()
+            }
             .background(DS.Colors.bg)
             .navigationTitle("Dashboard")
             .navigationBarTitleDisplayMode(.inline)
@@ -284,26 +310,7 @@ struct DashboardView: View {
         }
         .onAppear {
             AnalyticsManager.shared.track(.dashboardViewed)
-            // Generate engines in parallel on appear
-            Task {
-                async let f: () = ForecastEngine.shared.generate(store: store)
-                async let s: () = SubscriptionEngine.shared.analyze(store: store)
-                async let r: () = ReviewEngine.shared.analyze(store: store)
-                async let a: () = AccountManager.shared.fetchAccounts()
-                async let g: () = GoalManager.shared.fetchGoals()
-                async let x: () = CurrencyConverter.shared.fetchRatesIfNeeded()
-                _ = await (f, s, r, a, g, x)
-                await WidgetDataWriter.update(store: store)
-
-                // Compute copilot features after engines are ready
-                computeCopilotData()
-
-                // Refresh AI insights + rescue mode + proactive items
-                insightEngine.refresh(store: store)
-                budgetRescue.evaluate(store: store)
-                proactiveEngine.clearStaleDismissals()
-                proactiveEngine.refresh(store: store)
-            }
+            Task { await refreshDashboard() }
         }
         .onChange(of: store.selectedMonth) { _, _ in
             // Recompute everything when user switches months

@@ -58,8 +58,16 @@ struct AccountsListView: View {
                     archivedSection
                 }
 
-                if accountManager.activeAccounts.isEmpty && !accountManager.isLoading {
-                    emptyState
+                if accountManager.activeAccounts.isEmpty {
+                    if accountManager.isLoading {
+                        ProgressView()
+                            .controlSize(.large)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 60)
+                            .accessibilityLabel("Loading accounts")
+                    } else {
+                        emptyState
+                    }
                 }
             }
             .padding(.horizontal, 16)
