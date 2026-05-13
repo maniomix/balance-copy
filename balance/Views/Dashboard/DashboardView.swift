@@ -210,7 +210,7 @@ struct DashboardView: View {
                                                         .font(DS.Typography.caption)
                                                         .foregroundStyle(DS.Colors.text)
                                                     Spacer()
-                                                    Text("Save \(String(format: "$%.0f", Double(target.savingsIfReduced) / 100.0))")
+                                                    Text("Save \(DS.Format.money(target.savingsIfReduced))")
                                                         .font(DS.Typography.caption)
                                                         .foregroundStyle(DS.Colors.positive)
                                                 }

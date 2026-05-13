@@ -497,6 +497,8 @@ struct ContentView: View {
                                 .background(DS.Colors.accent, in: Circle())
                                 .shadow(color: DS.Colors.accent.opacity(0.4), radius: 8, y: 4)
                         }
+                        .accessibilityLabel("Ask Centmond AI")
+                        .accessibilityHint("Opens the AI chat assistant")
                         .padding(.trailing, 20)
                         .padding(.bottom, 90) // above tab bar
                     }
