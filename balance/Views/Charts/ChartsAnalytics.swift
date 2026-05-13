@@ -387,6 +387,7 @@ struct ChartEmptyState: View {
 struct ChartLoadingState: View {
     var height: CGFloat = 160
     @State private var phase: CGFloat = -1
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -402,8 +403,13 @@ struct ChartLoadingState: View {
             )
             .frame(height: height)
             .onAppear {
-                withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
-                    phase = 2
+                // WCAG 2.3.3: don't run the indefinitely-repeating shimmer
+                // when Reduce Motion is on. Loading skeleton is conveyed
+                // by the static surface fill alone.
+                if !reduceMotion {
+                    withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
+                        phase = 2
+                    }
                 }
             }
     }
