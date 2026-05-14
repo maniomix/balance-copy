@@ -2,8 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Centmond uses the camera so you can scan paper receipts and turn them into transactions on-device.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Centmond uses Face ID to securely unlock the app and protect your financial data.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Centmond accesses your photo library so you can attach receipt images to transactions you log.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
