@@ -65,12 +65,46 @@ private func barColor(for state: BudgetActivityAttributes.ContentState) -> Color
     return Color(red: 0.30, green: 0.85, blue: 0.55)
 }
 
+/// Cached locale-aware formatter for amounts. Uses current locale for
+/// thousands / decimal separators (de-DE → `1.000,00`, en-US → `1,000.00`).
+/// Symbol is appended separately so the wire-format `currencySymbol` from
+/// `BudgetActivityAttributes` stays the source of truth — keeps DI labels
+/// in sync with the app's currency setting without re-reading UserDefaults
+/// inside the widget extension.
+private let amountFormatter: NumberFormatter = {
+    let f = NumberFormatter()
+    f.numberStyle = .decimal
+    f.locale = .current
+    f.minimumFractionDigits = 2
+    f.maximumFractionDigits = 2
+    f.usesGroupingSeparator = true
+    return f
+}()
+
+private let amountFormatterNoDecimals: NumberFormatter = {
+    let f = NumberFormatter()
+    f.numberStyle = .decimal
+    f.locale = .current
+    f.minimumFractionDigits = 0
+    f.maximumFractionDigits = 0
+    f.usesGroupingSeparator = true
+    return f
+}()
+
+/// Compact form for tight spots (compact-trailing, minimal): no decimals,
+/// grouped thousands, symbol suffix. e.g. `1.234 €`.
 private func formatAmount(_ cents: Int, symbol: String) -> String {
-    "\(symbol)\(Int(Double(cents) / 100))"
+    let value = Decimal(cents) / 100
+    let body = amountFormatterNoDecimals.string(from: value as NSDecimalNumber) ?? "\(cents / 100)"
+    return "\(body) \(symbol)"
 }
 
+/// Full form for expanded regions: grouped thousands + two decimals.
+/// e.g. `1.234,56 €`.
 private func formatAmountDecimal(_ cents: Int, symbol: String) -> String {
-    "\(symbol)\(String(format: "%.2f", Double(cents) / 100))"
+    let value = Decimal(cents) / 100
+    let body = amountFormatter.string(from: value as NSDecimalNumber) ?? String(format: "%.2f", Double(cents) / 100)
+    return "\(body) \(symbol)"
 }
 
 private struct PageMeta {
