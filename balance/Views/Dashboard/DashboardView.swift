@@ -363,6 +363,11 @@ struct DashboardView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
+        // Widget "Quick Add" → ContentView tab-switches here then posts this;
+        // we flip the sheet open. Same UX as tapping the dashboard "+" FAB.
+        .onReceive(NotificationCenter.default.publisher(for: .openAddTransaction)) { _ in
+            showAdd = true
+        }
         .sheet(isPresented: $showPaywall) {
         }
         .sheet(isPresented: $showAIChat) {

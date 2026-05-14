@@ -341,6 +341,15 @@ struct ContentView: View {
                 case "transactions":    selectedTab = .transactions
                 case "accounts":        selectedTab = .more
                 case "goals":           selectedTab = .goals
+                case "add":
+                    // Widget "Quick Add" button: jump to Dashboard and open
+                    // the Add Transaction sheet. Previously fell through to
+                    // `default: break` and silently no-op'd, leaving widget
+                    // users staring at whatever tab was last active.
+                    // Dashboard owns the showAdd state, so we tab-switch
+                    // first and post a notification it listens for.
+                    selectedTab = .dashboard
+                    NotificationCenter.default.post(name: .openAddTransaction, object: nil)
                 default: break
                 }
             }

@@ -7,6 +7,10 @@ extension Notification.Name {
     static let accountDidDelete = Notification.Name("TransactionService.accountDidDelete")
     /// Posted when a goal is deleted. `userInfo["goalId"]` contains the deleted UUID.
     static let goalDidDelete = Notification.Name("TransactionService.goalDidDelete")
+    /// Posted when something external (widget deep link, etc.) asks the app
+    /// to surface the Add Transaction sheet. DashboardView listens and flips
+    /// its local `showAdd` state.
+    static let openAddTransaction = Notification.Name("Centmond.openAddTransaction")
 }
 
 /// Outcome of a transaction write's **local persistence** step.
