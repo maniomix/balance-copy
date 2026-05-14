@@ -355,14 +355,15 @@ struct AIProactiveBanner: View {
                             .foregroundStyle(accent)
                     }
 
-                    VStack(alignment: .leading, spacing: 1) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text(item.title)
-                            .font(.system(size: 16, weight: .bold))
+                            .font(.system(size: 15, weight: .bold))
                             .foregroundStyle(DS.Colors.text)
+                            .lineLimit(1)
                         Text(item.summary)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(DS.Colors.subtext)
-                            .lineLimit(1)
+                            .lineLimit(2, reservesSpace: true)
                     }
 
                     Spacer()
@@ -441,39 +442,55 @@ struct AIProactiveBanner: View {
     // ── Compact Card ──
 
     private func compactCard(_ item: ProactiveItem) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        let accent = severityColor(item.severity)
+        return HStack(alignment: .top, spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(accent.opacity(0.18))
+                    .frame(width: 34, height: 34)
                 Image(systemName: item.type.icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(severityColor(item.severity))
-                Text(item.title)
-                    .font(DS.Typography.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(DS.Colors.text)
-                    .lineLimit(1)
-                Spacer()
-                Button {
-                    withAnimation { engine.dismiss(item.id) }
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(DS.Colors.subtext)
-                }
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(accent)
             }
 
-            Text(item.summary)
-                .font(.system(size: 11))
-                .foregroundStyle(DS.Colors.subtext)
-                .lineLimit(2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(DS.Colors.text)
+                    .lineLimit(1)
+                Text(item.summary)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DS.Colors.subtext)
+                    .lineLimit(2, reservesSpace: true)
+            }
+
+            Spacer(minLength: 4)
+
+            Button {
+                withAnimation { engine.dismiss(item.id) }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(DS.Colors.subtext)
+                    .padding(6)
+                    .background(Circle().fill(DS.Colors.subtext.opacity(0.08)))
+            }
+            .buttonStyle(.plain)
         }
-        .padding(10)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(colorScheme == .dark ? DS.Colors.surfaceElevated : DS.Colors.surface)
+            LinearGradient(
+                colors: [accent.opacity(colorScheme == .dark ? 0.18 : 0.10),
+                         accent.opacity(colorScheme == .dark ? 0.04 : 0.02)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
         )
+        .background(colorScheme == .dark ? DS.Colors.surfaceElevated : DS.Colors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(severityColor(item.severity).opacity(0.2), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(accent.opacity(0.25), lineWidth: 1)
         )
     }
 

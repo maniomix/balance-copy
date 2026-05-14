@@ -30,18 +30,17 @@ struct AIInsightBanner: View {
                         .foregroundStyle(severityColor)
                 }
 
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(insight.title)
-                        .font(.system(size: compact ? 14 : 16, weight: .bold))
+                        .font(.system(size: compact ? 15 : 16, weight: .bold))
                         .foregroundStyle(DS.Colors.text)
-                        .lineLimit(compact ? 2 : 1)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(1)
                     if let firstLine = insight.body.components(separatedBy: "\n").first,
                        !firstLine.isEmpty {
                         Text(firstLine)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(DS.Colors.subtext)
-                            .lineLimit(compact ? 2 : 1)
+                            .lineLimit(compact ? 2 : 1, reservesSpace: compact)
                     }
                 }
 
