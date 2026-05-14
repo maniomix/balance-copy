@@ -225,25 +225,10 @@ struct DashboardView: View {
                                               onOpenFeed: { showProactiveFeed = true },
                                               onOpenChat: { showAIChat = true })
 
-                            // Morning briefing (legacy — kept as fallback if proactive briefing is dismissed)
-                            if proactiveEngine.morningBriefing == nil,
-                               let briefing = insightEngine.morningBriefing {
-                                AIInsightBanner(insight: briefing)
-                            }
-
-                            // AI insight row
-                            if !insightEngine.insights.isEmpty {
-                                AIInsightRow(insights: insightEngine.insights) { action in
-                                    showAIChat = true
-                                }
-                            }
-
                             // Monthly briefing entry
                             monthlyBriefingEntryCard
 
                         }
-
-                        advisorInsightsCard
                     }
                 }
                 .padding(.horizontal, 16)
@@ -1626,43 +1611,6 @@ struct DashboardView: View {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(methodColor.opacity(colorScheme == .dark ? 0.2 : 0.15), lineWidth: 1)
             )
-        }
-    }
-
-    // MARK: - Advisor Insights
-
-    private var advisorInsightsCard: some View {
-        let insights = Analytics.generateInsights(store: store).prefix(5)
-        return DS.Card {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    HStack(spacing: 6) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(DS.Colors.accent)
-                        Text("Advisor Insights")
-                            .font(DS.Typography.section)
-                            .foregroundStyle(DS.Colors.text)
-                    }
-                    Spacer()
-                    Text("We're here to help, not judge")
-                        .font(DS.Typography.caption)
-                        .foregroundStyle(DS.Colors.subtext)
-                }
-
-                if insights.isEmpty {
-                    Text("Add your expenses to get started")
-                        .font(DS.Typography.body)
-                        .foregroundStyle(DS.Colors.subtext)
-                        .padding(.vertical, 6)
-                } else {
-                    VStack(spacing: 10) {
-                        ForEach(Array(insights)) { insight in
-                            InsightRow(insight: insight)
-                        }
-                    }
-                }
-            }
         }
     }
 
