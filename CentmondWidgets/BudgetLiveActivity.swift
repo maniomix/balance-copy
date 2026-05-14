@@ -130,11 +130,11 @@ private struct CompactLeading: View {
         // so the ring doesn't crowd or clip under the sensor edge.
         ZStack {
             Circle()
-                .stroke(barColor(for: state).opacity(0.25), lineWidth: 2)
+                .stroke(barColor(for: state).opacity(0.25), lineWidth: 2.4)
             Circle()
                 .trim(from: 0, to: max(0.04, state.percentSpent))
                 .stroke(barColor(for: state),
-                        style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                        style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
                 .rotationEffect(.degrees(-90))
 
             // Center dot turns solid when over budget — instant urgency cue
@@ -142,10 +142,10 @@ private struct CompactLeading: View {
             if state.isOverBudget {
                 Circle()
                     .fill(.red)
-                    .frame(width: 4, height: 4)
+                    .frame(width: 5, height: 5)
             }
         }
-        .frame(width: 16, height: 16)
+        .frame(width: 18, height: 18)
         .padding(.trailing, 1)
     }
 }
@@ -456,15 +456,20 @@ private struct WeekPage: View {
                         tint: barColor(for: state)
                     )
                 }
-                HStack(spacing: 6) {
-                    Image(systemName: "chart.bar.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.55))
-                    Text("Weekly spending pace")
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.6))
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
+                if state.totalCents > 0 {
+                    let pctOfBudget = Double(state.weekSpentCents) / Double(state.totalCents)
+                    ProgressBar(percent: pctOfBudget, tint: barColor(for: state))
+                } else {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chart.bar.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.55))
+                        Text("Weekly spending pace")
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.6))
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
                 }
             }
         }
@@ -509,6 +514,13 @@ private struct TopCategoryPage: View {
                         .foregroundStyle(.white.opacity(0.85))
                         .lineLimit(1)
                     Spacer(minLength: 0)
+                    if state.spentCents > 0 {
+                        ProgressBar(
+                            percent: Double(state.topCategoryCents) / Double(state.spentCents),
+                            tint: barColor(for: state)
+                        )
+                        .frame(width: 64)
+                    }
                 }
             }
         }
@@ -557,6 +569,13 @@ private struct GoalPage: View {
                         .foregroundStyle(.white.opacity(0.85))
                         .lineLimit(1)
                     Spacer(minLength: 0)
+                    ProgressBar(
+                        percent: pct,
+                        tint: pct >= 1.0
+                            ? Color(red: 0.30, green: 0.85, blue: 0.55)
+                            : barColor(for: state)
+                    )
+                    .frame(width: 64)
                 }
             }
         }
