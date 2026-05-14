@@ -565,11 +565,6 @@ struct TransactionsView: View {
 
     private var transactionsList: some View {
         Group {
-            // Upcoming Payments Banner
-            UpcomingPaymentsBanner(store: $store)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 4)
-
             // Search Scope Selector (if searching)
             if !search.isEmpty {
                 HStack(spacing: 8) {
