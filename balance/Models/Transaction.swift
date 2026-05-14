@@ -129,10 +129,16 @@ struct Transaction: Identifiable, Hashable, Codable {
     /// Both legs share the same group id. Filter `transferGroupId == nil` from
     /// income/expense roll-ups so transfers don't double-count.
     var transferGroupId: UUID?
+    /// `HouseholdMember.id` this transaction is attributed to. Soft FK
+    /// (members live inside the household_state JSONB blob, not a
+    /// relational table). Owned by macOS today — iOS PULLs it for
+    /// Household Overview attribution but never pushes it (see
+    /// TransactionRepository.Row.encode(to:)).
+    var householdMemberId: UUID?
 
     var isTransfer: Bool { transferGroupId != nil }
 
-    init(id: UUID = UUID(), amount: Int, date: Date, category: Category, name: String = "", note: String, paymentMethod: PaymentMethod = .card, type: TransactionType = .expense, attachmentData: Data? = nil, attachmentType: AttachmentType? = nil, accountId: UUID? = nil, isFlagged: Bool = false, linkedGoalId: UUID? = nil, lastModified: Date = Date(), transferGroupId: UUID? = nil) {
+    init(id: UUID = UUID(), amount: Int, date: Date, category: Category, name: String = "", note: String, paymentMethod: PaymentMethod = .card, type: TransactionType = .expense, attachmentData: Data? = nil, attachmentType: AttachmentType? = nil, accountId: UUID? = nil, isFlagged: Bool = false, linkedGoalId: UUID? = nil, lastModified: Date = Date(), transferGroupId: UUID? = nil, householdMemberId: UUID? = nil) {
         self.id = id
         self.amount = amount
         self.date = date
@@ -148,10 +154,11 @@ struct Transaction: Identifiable, Hashable, Codable {
         self.linkedGoalId = linkedGoalId
         self.lastModified = lastModified
         self.transferGroupId = transferGroupId
+        self.householdMemberId = householdMemberId
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, amount, date, category, name, note, paymentMethod, type, attachmentData, attachmentType, accountId, isFlagged, linkedGoalId, lastModified, transferGroupId
+        case id, amount, date, category, name, note, paymentMethod, type, attachmentData, attachmentType, accountId, isFlagged, linkedGoalId, lastModified, transferGroupId, householdMemberId
     }
 
     init(from decoder: Decoder) throws {
@@ -173,6 +180,7 @@ struct Transaction: Identifiable, Hashable, Codable {
         linkedGoalId = try container.decodeIfPresent(UUID.self, forKey: .linkedGoalId)
         lastModified = try container.decodeIfPresent(Date.self, forKey: .lastModified) ?? date
         transferGroupId = try container.decodeIfPresent(UUID.self, forKey: .transferGroupId)
+        householdMemberId = try container.decodeIfPresent(UUID.self, forKey: .householdMemberId)
     }
 }
 

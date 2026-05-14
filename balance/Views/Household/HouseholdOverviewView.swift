@@ -48,8 +48,9 @@ struct HouseholdOverviewView: View {
                     hubTabBar
                     switch selectedTab {
                     case .overview:
-                        balanceSummaryCard(h)
-                        pairBalancesCard(h)
+                        householdHeroCard(h)
+                        membersSpendingCard(h)
+                        recentActivityCard(h)
                         sharedBudgetCard(h)
                     case .splits:
                         recentSplitsCard(h)
@@ -210,7 +211,245 @@ struct HouseholdOverviewView: View {
         }
     }
 
-    // MARK: - Balance Summary
+    // MARK: - Household Overview parity cards (macOS port)
+
+    /// Per-member this-month spending derived from `Transaction.householdMemberId`.
+    /// Mirrors macOS `HouseholdView.rebuildSnapshot` — sums tagged transactions
+    /// for the current `selectedMonth`. iOS-set tags are not pushed; macOS owns
+    /// the column. See `feedback_asymmetric_cloud_columns`.
+    private func memberMonthSpend() -> [UUID: Int] {
+        var result: [UUID: Int] = [:]
+        for tx in store.transactions where tx.type == .expense {
+            guard Store.monthKey(tx.date) == monthKey,
+                  let mid = tx.householdMemberId else { continue }
+            result[mid, default: 0] += tx.amount
+        }
+        return result
+    }
+
+    private func householdMonthTotal() -> Int {
+        store.transactions
+            .filter { $0.type == .expense
+                && $0.householdMemberId != nil
+                && Store.monthKey($0.date) == monthKey }
+            .reduce(0) { $0 + $1.amount }
+    }
+
+    private func heroTitle(net: Int) -> String {
+        if net == 0 { return "All settled" }
+        if net > 0 { return "You have a balance" }
+        return "You're owed money"
+    }
+
+    /// Top "All settled / Owed / Owes" card with this-month household total.
+    /// Multi-member friendly — works for solo, couples, and N-member households.
+    private func householdHeroCard(_ h: Household) -> some View {
+        let monthSpend = householdMonthTotal()
+        let myOwed = manager.totalOwed(currentUserId: currentUserId)
+        let myOwedTo = manager.totalOwedToYou(currentUserId: currentUserId)
+        let net = myOwed - myOwedTo
+        return DS.Card {
+            HStack(alignment: .center, spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill((net == 0 ? DS.Colors.positive : DS.Colors.warning).opacity(0.18))
+                        .frame(width: 36, height: 36)
+                    Image(systemName: net == 0 ? "checkmark" : "exclamationmark")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(net == 0 ? DS.Colors.positive : DS.Colors.warning)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(heroTitle(net: net))
+                        .font(DS.Typography.section)
+                        .foregroundStyle(net == 0 ? DS.Colors.positive : DS.Colors.text)
+                    if net != 0 {
+                        Text(net > 0
+                             ? "You owe \(DS.Format.money(net))"
+                             : "Owed to you \(DS.Format.money(abs(net)))")
+                            .font(DS.Typography.caption)
+                            .foregroundStyle(DS.Colors.subtext)
+                    }
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("THIS MONTH")
+                        .font(.system(size: 10, weight: .semibold))
+                        .tracking(0.5)
+                        .foregroundStyle(DS.Colors.subtext)
+                    Text(DS.Format.money(monthSpend))
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundStyle(DS.Colors.text)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+            }
+        }
+    }
+
+    /// Per-member rows showing this-month spending + settlement sub-line.
+    /// Mirrors macOS `memberRowsList`. Spending keys by `HouseholdMember.id`
+    /// (not userId) so it matches the `Transaction.householdMemberId` source.
+    private func membersSpendingCard(_ h: Household) -> some View {
+        let perMember = memberMonthSpend()
+        let members = h.activeMembers.isEmpty ? h.members : h.activeMembers
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("MEMBERS")
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(0.5)
+                    .foregroundStyle(DS.Colors.subtext)
+                Spacer()
+                Text("\(members.count)")
+                    .font(DS.Typography.caption)
+                    .foregroundStyle(DS.Colors.subtext)
+            }
+            .padding(.horizontal, 4)
+            DS.Card {
+                VStack(spacing: 0) {
+                    ForEach(Array(members.enumerated()), id: \.element.id) { idx, member in
+                        memberSpendingRow(member, monthSpend: perMember[member.id] ?? 0)
+                        if idx != members.count - 1 {
+                            Divider().padding(.leading, 56)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func memberSpendingRow(_ member: HouseholdMember, monthSpend: Int) -> some View {
+        let net: Int = {
+            if member.userId == currentUserId { return 0 }
+            return manager.netBalance(fromUser: currentUserId, toUser: member.userId)
+        }()
+        HStack(spacing: 12) {
+            memberAvatar(member, size: 36)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(member.displayName)
+                        .font(DS.Typography.body.weight(.semibold))
+                        .foregroundStyle(DS.Colors.text)
+                    if member.role == .owner {
+                        Text("Owner")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(DS.Colors.accent)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(DS.Colors.accent.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                    }
+                }
+                if net == 0 {
+                    Text("All settled")
+                        .font(DS.Typography.caption)
+                        .foregroundStyle(DS.Colors.subtext)
+                } else if net > 0 {
+                    Text("Owes \(DS.Format.money(net))")
+                        .font(DS.Typography.caption)
+                        .foregroundStyle(DS.Colors.warning)
+                } else {
+                    Text("Owed \(DS.Format.money(abs(net)))")
+                        .font(DS.Typography.caption)
+                        .foregroundStyle(DS.Colors.positive)
+                }
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(DS.Format.money(monthSpend))
+                    .font(DS.Typography.number)
+                    .foregroundStyle(monthSpend > 0 ? DS.Colors.text : DS.Colors.subtext)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text("this month")
+                    .font(.system(size: 10))
+                    .foregroundStyle(DS.Colors.subtext)
+            }
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 4)
+    }
+
+    /// Last 15 household-tagged transactions, newest first. Mirrors macOS
+    /// `recentActivity` which filters `Transaction.householdMember != nil`.
+    @ViewBuilder
+    private func recentActivityCard(_ h: Household) -> some View {
+        let memberById = Dictionary(uniqueKeysWithValues: h.members.map { ($0.id, $0) })
+        let recent = Array(
+            store.transactions
+                .filter { $0.householdMemberId != nil && memberById[$0.householdMemberId!] != nil }
+                .sorted { $0.date > $1.date }
+                .prefix(15)
+        )
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("RECENT ACTIVITY")
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(0.5)
+                    .foregroundStyle(DS.Colors.subtext)
+                Spacer()
+                if !recent.isEmpty {
+                    Text("\(recent.count)")
+                        .font(DS.Typography.caption)
+                        .foregroundStyle(DS.Colors.subtext)
+                }
+            }
+            .padding(.horizontal, 4)
+            DS.Card {
+                if recent.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "tray")
+                            .font(.system(size: 22, weight: .light))
+                            .foregroundStyle(DS.Colors.subtext)
+                        Text("No shared activity yet")
+                            .font(DS.Typography.body.weight(.semibold))
+                            .foregroundStyle(DS.Colors.text)
+                        Text("Tag a transaction to a member on macOS to see it here.")
+                            .font(DS.Typography.caption)
+                            .foregroundStyle(DS.Colors.subtext)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(recent.enumerated()), id: \.element.id) { idx, tx in
+                            activityRow(tx, member: tx.householdMemberId.flatMap { memberById[$0] })
+                            if idx != recent.count - 1 {
+                                Divider().padding(.leading, 4)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func activityRow(_ tx: Transaction, member: HouseholdMember?) -> some View {
+        HStack(spacing: 10) {
+            Text(tx.date.formatted(.dateTime.day().month(.abbreviated)))
+                .font(DS.Typography.caption)
+                .foregroundStyle(DS.Colors.subtext)
+                .frame(width: 56, alignment: .leading)
+            Text(tx.name.isEmpty ? tx.category.title : tx.name)
+                .font(DS.Typography.body)
+                .foregroundStyle(DS.Colors.text)
+                .lineLimit(1)
+            Spacer()
+            Text(DS.Format.money(tx.amount))
+                .font(DS.Typography.number)
+                .foregroundStyle(DS.Colors.text)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            if let member { memberAvatar(member, size: 22) }
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 4)
+    }
+
+    // MARK: - Balance Summary (legacy — retained only as fallback / not on Overview)
 
     private func balanceSummaryCard(_ h: Household) -> some View {
         DS.Card {

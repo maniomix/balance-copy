@@ -43,7 +43,37 @@ final class TransactionRepository {
         let is_flagged: Bool
         let linked_goal_id: String?
         let transfer_group_id: String?
+        /// Soft FK to a HouseholdMember.id. **PULL ONLY** on iOS — iOS has
+        /// no UI to set this, and sending null on every iOS upsert would
+        /// wipe macOS's per-transaction attributions on first sync. The
+        /// custom `encode(to:)` below intentionally omits this field.
+        /// See `feedback_asymmetric_cloud_columns` memory.
+        let household_member_id: String?
         let updated_at: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id, account_id, category_key, amount, occurred_at, merchant, note, type
+            case payment_method, is_flagged, linked_goal_id, transfer_group_id
+            case household_member_id, updated_at
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(id, forKey: .id)
+            try c.encodeIfPresent(account_id, forKey: .account_id)
+            try c.encodeIfPresent(category_key, forKey: .category_key)
+            try c.encode(amount, forKey: .amount)
+            try c.encode(occurred_at, forKey: .occurred_at)
+            try c.encodeIfPresent(merchant, forKey: .merchant)
+            try c.encodeIfPresent(note, forKey: .note)
+            try c.encode(type, forKey: .type)
+            try c.encode(payment_method, forKey: .payment_method)
+            try c.encode(is_flagged, forKey: .is_flagged)
+            try c.encodeIfPresent(linked_goal_id, forKey: .linked_goal_id)
+            try c.encodeIfPresent(transfer_group_id, forKey: .transfer_group_id)
+            try c.encodeIfPresent(updated_at, forKey: .updated_at)
+            // household_member_id intentionally NOT encoded — macOS owns this.
+        }
 
         static let isoIn:  ISO8601DateFormatter = {
             let f = ISO8601DateFormatter()
@@ -148,6 +178,7 @@ final class TransactionRepository {
             is_flagged: tx.isFlagged,
             linked_goal_id: tx.linkedGoalId?.uuidString,
             transfer_group_id: tx.transferGroupId?.uuidString,
+            household_member_id: tx.householdMemberId?.uuidString,  // populated locally; omitted on encode (see Row.encode)
             updated_at: nil  // never sent — moddatetime trigger sets it
         )
     }
@@ -174,7 +205,8 @@ final class TransactionRepository {
             isFlagged: row.is_flagged,
             linkedGoalId: row.linked_goal_id.flatMap(UUID.init(uuidString:)),
             lastModified: lastModified,
-            transferGroupId: row.transfer_group_id.flatMap(UUID.init(uuidString:))
+            transferGroupId: row.transfer_group_id.flatMap(UUID.init(uuidString:)),
+            householdMemberId: row.household_member_id.flatMap(UUID.init(uuidString:))
         )
     }
 }
