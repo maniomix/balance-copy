@@ -173,62 +173,6 @@ struct DashboardView: View {
                             paymentBreakdownCard
                         }
 
-                        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                        // SECTION: AI Advisor
-                        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                        VStack(spacing: 12) {
-                            DS.SectionHeader(title: "AI Advisor", icon: "sparkles")
-
-                            // Budget Rescue Mode
-                            if let plan = budgetRescue.plan, plan.isActive {
-                                DS.Card {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        HStack(spacing: 6) {
-                                            Image(systemName: "exclamationmark.triangle.fill")
-                                                .foregroundStyle(plan.budgetUsedPercent >= 100 ? DS.Colors.danger : DS.Colors.warning)
-                                            Text("Budget Rescue")
-                                                .font(DS.Typography.callout)
-                                                .fontWeight(.semibold)
-                                                .foregroundStyle(DS.Colors.text)
-                                            Spacer()
-                                            Text("\(plan.budgetUsedPercent)% used")
-                                                .font(DS.Typography.caption)
-                                                .foregroundStyle(plan.budgetUsedPercent >= 100 ? DS.Colors.danger : DS.Colors.warning)
-                                        }
-
-                                        ForEach(plan.tips, id: \.self) { tip in
-                                            Text("• \(tip)")
-                                                .font(DS.Typography.caption)
-                                                .foregroundStyle(DS.Colors.subtext)
-                                        }
-
-                                        if !plan.reductionTargets.isEmpty {
-                                            Divider().foregroundStyle(DS.Colors.grid)
-                                            ForEach(plan.reductionTargets) { target in
-                                                HStack {
-                                                    Text(target.category)
-                                                        .font(DS.Typography.caption)
-                                                        .foregroundStyle(DS.Colors.text)
-                                                    Spacer()
-                                                    Text("Save \(DS.Format.money(target.savingsIfReduced))")
-                                                        .font(DS.Typography.caption)
-                                                        .foregroundStyle(DS.Colors.positive)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // ── Proactive AI items (Phase 6) ──
-                            AIProactiveBanner(store: $store,
-                                              onOpenFeed: { showProactiveFeed = true },
-                                              onOpenChat: { showAIChat = true })
-
-                            // Monthly briefing entry
-                            monthlyBriefingEntryCard
-
-                        }
                     }
                 }
                 .padding(.horizontal, 16)
