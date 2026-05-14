@@ -281,7 +281,7 @@ struct ReviewQueueView: View {
         let fmt = DateFormatter()
         fmt.dateFormat = "MMM d"
         let dateStr = fmt.string(from: tx.date)
-        let amount = "\(DS.Format.currencySymbol())\(DS.Format.currency(tx.amount))"
+        let amount = "\(DS.Format.currency(tx.amount))"
 
         if item.transactionIds.count > 1 {
             return "\(item.transactionIds.count) transactions · \(amount) · \(dateStr)"

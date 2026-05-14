@@ -52,7 +52,7 @@ struct RecurringTransactionsCard: View {
                                 
                                 if monthlyTotal > 0 {
                                     Text("·")
-                                    Text("\(DS.Format.currencySymbol())\(DS.Format.currency(monthlyTotal))/mo")
+                                    Text("\(DS.Format.currency(monthlyTotal))/mo")
                                         .font(.system(size: 12, weight: .semibold))
                                 }
                             }

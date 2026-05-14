@@ -57,7 +57,7 @@ struct UpcomingPaymentsBanner: View {
                             
                             Spacer()
                             
-                            Text("\(DS.Format.currencySymbol())\(DS.Format.currency(totalUpcoming))")
+                            Text("\(DS.Format.currency(totalUpcoming))")
                                 .font(.system(size: 13, weight: .bold, design: .rounded))
                                 .foregroundStyle(DS.Colors.text)
                         }
@@ -136,7 +136,7 @@ struct UpcomingPaymentsSheet: View {
                         .foregroundStyle(DS.Colors.subtext)
                     
                     let total = upcomingPayments.reduce(0) { $0 + $1.0.amount }
-                    Text("\(DS.Format.currencySymbol())\(DS.Format.currency(total))")
+                    Text("\(DS.Format.currency(total))")
                         .font(.system(size: 26, weight: .bold, design: .rounded))
                         .foregroundStyle(DS.Colors.text)
                 }
@@ -218,7 +218,7 @@ struct UpcomingPaymentRow: View {
                 
                 Spacer()
                 
-                Text("\(DS.Format.currencySymbol())\(DS.Format.currency(recurring.amount))")
+                Text("\(DS.Format.currency(recurring.amount))")
                     .font(.system(size: 16, weight: .bold, design: .rounded))
                     .foregroundStyle(DS.Colors.text)
             }

@@ -110,7 +110,7 @@ struct SubscriptionsOverviewView: View {
                     .font(DS.Typography.caption)
                     .foregroundStyle(DS.Colors.subtext)
 
-                Text("\(DS.Format.currencySymbol())\(DS.Format.currency(engine.monthlyTotal))")
+                Text("\(DS.Format.currency(engine.monthlyTotal))")
                     .font(.system(size: 32, weight: .bold, design: .rounded))
                     .foregroundStyle(DS.Colors.accent)
 
@@ -119,7 +119,7 @@ struct SubscriptionsOverviewView: View {
                 HStack(alignment: .top, spacing: 0) {
                     summaryStat(
                         label: "Yearly",
-                        value: "\(DS.Format.currencySymbol())\(DS.Format.currency(engine.yearlyTotal))"
+                        value: "\(DS.Format.currency(engine.yearlyTotal))"
                     )
                     statSeparator
                     summaryStat(
@@ -270,9 +270,11 @@ struct SubscriptionsOverviewView: View {
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text("\(DS.Format.currencySymbol())\(DS.Format.currency(sub.expectedAmount))")
+                    Text("\(DS.Format.currency(sub.expectedAmount))")
                         .font(.system(size: 16, weight: .bold, design: .rounded))
                         .foregroundStyle(DS.Colors.text)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                     if let days = sub.daysUntilRenewal {
                         Text(days < 0 ? "\(abs(days))d overdue"
                              : days == 0 ? "Today"
@@ -614,24 +616,29 @@ struct SubscriptionsOverviewView: View {
 
                 // Amount
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text("\(DS.Format.currencySymbol())\(DS.Format.currency(sub.expectedAmount))")
+                    Text("\(DS.Format.currency(sub.expectedAmount))")
                         .font(.system(size: 16, weight: .bold, design: .rounded))
                         .foregroundStyle(DS.Colors.text)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
 
                     Text("/\(sub.billingCycle == .yearly ? "yr" : sub.billingCycle == .weekly ? "wk" : "mo")")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(DS.Colors.subtext)
+                        .lineLimit(1)
 
                     if sub.hasPriceIncrease, let change = sub.priceChangeAmount, change > 0 {
                         HStack(spacing: 2) {
                             Image(systemName: "arrow.up")
                                 .font(.system(size: 8, weight: .bold))
-                            Text("\(DS.Format.currencySymbol())\(DS.Format.currency(change))")
+                            Text("\(DS.Format.currency(change))")
                                 .font(.system(size: 10, weight: .semibold))
+                                .lineLimit(1)
                         }
                         .foregroundStyle(DS.Colors.danger)
                     }
                 }
+                .fixedSize(horizontal: true, vertical: false)
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .semibold))
@@ -781,7 +788,7 @@ private struct InsightDetailSheet: View {
                     Text(sub.merchantName.capitalized)
                         .font(.system(size: 14, weight: .semibold, design: .rounded))
                         .foregroundStyle(DS.Colors.text)
-                    Text("\(DS.Format.currencySymbol())\(DS.Format.currency(sub.expectedAmount)) / \(sub.billingCycle.displayName)")
+                    Text("\(DS.Format.currency(sub.expectedAmount)) / \(sub.billingCycle.displayName)")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(DS.Colors.subtext)
                 }

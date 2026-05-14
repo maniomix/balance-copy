@@ -43,7 +43,7 @@ struct SubscriptionsDashboardCard: View {
     private var a11yLabel: String {
         var parts: [String] = ["Subscriptions"]
         parts.append("\(engine.activeCount) active")
-        parts.append("\(DS.Format.currencySymbol())\(DS.Format.currency(engine.monthlyTotal)) per month")
+        parts.append("\(DS.Format.currency(engine.monthlyTotal)) per month")
         if let summary = alertsSummary { parts.append(summary) }
         return parts.joined(separator: ", ")
     }

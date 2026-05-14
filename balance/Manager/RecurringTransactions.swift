@@ -196,7 +196,7 @@ struct RecurringTransactionsView: View {
                         .filter { $0.frequency == .monthly }
                         .reduce(0) { $0 + $1.amount }
                     
-                    Text("\(DS.Format.currencySymbol())\(DS.Format.currency(monthlyTotal))")
+                    Text("\(DS.Format.currency(monthlyTotal))")
                         .font(.system(size: 26, weight: .bold, design: .rounded))
                         .foregroundStyle(DS.Colors.text)
                 }
@@ -336,7 +336,7 @@ struct RecurringRow: View {
                 
                 // Amount + actions
                 VStack(alignment: .trailing, spacing: 6) {
-                    Text("\(DS.Format.currencySymbol())\(DS.Format.currency(recurring.amount))")
+                    Text("\(DS.Format.currency(recurring.amount))")
                         .font(.system(size: 16, weight: .bold, design: .rounded))
                         .foregroundStyle(DS.Colors.text)
                     

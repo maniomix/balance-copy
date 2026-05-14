@@ -129,7 +129,7 @@ struct SubscriptionDetailView: View {
 
                 // Main cost
                 HStack(alignment: .lastTextBaseline, spacing: 4) {
-                    Text("\(DS.Format.currencySymbol())\(DS.Format.currency(liveSub.expectedAmount))")
+                    Text("\(DS.Format.currency(liveSub.expectedAmount))")
                         .font(.system(size: 32, weight: .bold, design: .rounded))
                         .foregroundStyle(DS.Colors.text)
 
@@ -143,7 +143,7 @@ struct SubscriptionDetailView: View {
                         HStack(spacing: 3) {
                             Image(systemName: change > 0 ? "arrow.up.right" : "arrow.down.right")
                                 .font(.system(size: 12, weight: .bold))
-                            Text("\(DS.Format.currencySymbol())\(DS.Format.currency(abs(change)))")
+                            Text("\(DS.Format.currency(abs(change)))")
                                 .font(.system(size: 14, weight: .bold, design: .rounded))
                         }
                         .foregroundStyle(change > 0 ? DS.Colors.danger : DS.Colors.positive)
@@ -212,7 +212,7 @@ struct SubscriptionDetailView: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(DS.Colors.subtext)
 
-            Text("\(DS.Format.currencySymbol())\(DS.Format.currency(amount))")
+            Text("\(DS.Format.currency(amount))")
                 .font(.system(size: 16, weight: .bold, design: .rounded))
                 .foregroundStyle(DS.Colors.text)
         }
@@ -306,7 +306,7 @@ struct SubscriptionDetailView: View {
 
                         Spacer()
 
-                        Text("\(DS.Format.currencySymbol())\(DS.Format.currency(charge.amount))")
+                        Text("\(DS.Format.currency(charge.amount))")
                             .font(.system(size: 14, weight: .semibold, design: .rounded))
                             .foregroundStyle(DS.Colors.text)
 

@@ -109,7 +109,7 @@ struct ReviewActionSheet: View {
                             Text("This charge")
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(DS.Colors.subtext)
-                            Text("\(DS.Format.currencySymbol())\(DS.Format.currency(spike))")
+                            Text("\(DS.Format.currency(spike))")
                                 .font(.system(size: 16, weight: .bold, design: .rounded))
                                 .foregroundStyle(DS.Colors.danger)
                         }
@@ -117,7 +117,7 @@ struct ReviewActionSheet: View {
                             Text("Category avg")
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(DS.Colors.subtext)
-                            Text("\(DS.Format.currencySymbol())\(DS.Format.currency(avg))")
+                            Text("\(DS.Format.currency(avg))")
                                 .font(.system(size: 16, weight: .bold, design: .rounded))
                                 .foregroundStyle(DS.Colors.text)
                         }
@@ -172,7 +172,7 @@ struct ReviewActionSheet: View {
 
                             Spacer()
 
-                            Text("\(DS.Format.currencySymbol())\(DS.Format.currency(tx.amount))")
+                            Text("\(DS.Format.currency(tx.amount))")
                                 .font(.system(size: 14, weight: .bold, design: .rounded))
                                 .foregroundStyle(DS.Colors.text)
                         }
