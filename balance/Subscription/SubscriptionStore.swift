@@ -36,6 +36,13 @@ struct SubscriptionStoreSnapshot: Codable {
     /// from this dict) the first time `analyze()` produces a record with
     /// the matching `merchantKey`.
     var legacyStatusOverridesByKey: [String: String] = [:]
+
+    /// IDs of records last pulled from the cloud `subscriptions` columnar
+    /// table (macOS-owned). Tracked so we can prune records that macOS
+    /// deletes without disturbing local-only manual or auto-detected ones.
+    /// Empty on devices that have never received a cloud pull. Decoder
+    /// defaults to `[]` for back-compat with pre-cloud snapshots.
+    var cloudSubscriptionIds: Set<UUID> = []
 }
 
 // MARK: - On-disk persistence

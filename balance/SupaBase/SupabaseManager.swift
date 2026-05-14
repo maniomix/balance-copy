@@ -342,7 +342,7 @@ class SupabaseManager: ObservableObject {
     private static let realtimeWatchedTables: [String] = [
         "transactions", "monthly_budgets", "monthly_category_budgets",
         "goals", "goal_contributions", "categories", "accounts", "profiles",
-        "subscription_state", "household_state",
+        "subscription_state", "subscriptions", "household_state",
         "ai_memory", "ai_chat_sessions", "ai_chat_messages",
         "saved_filter_presets"
     ]
@@ -453,6 +453,7 @@ class SupabaseManager: ObservableObject {
             }
         }
         await SubscriptionStateSync.pull()
+        await SubscriptionsTableSync.pull()
         await SavedFilterPresetSync.pull()
         await AIStateSync.pull()
         onUpdate()

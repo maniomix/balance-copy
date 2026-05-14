@@ -82,6 +82,7 @@ class AuthManager: ObservableObject {
                 }
                 // Pull cross-device per-user state (Phase 5.6+).
                 await SubscriptionStateSync.pull()
+                await SubscriptionsTableSync.pull()
                 await SavedFilterPresetSync.pull()
                 await AIStateSync.pull()
             } catch {
