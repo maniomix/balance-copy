@@ -25,22 +25,9 @@ struct CycleBudgetPageIntent: LiveActivityIntent {
     init() {}
 
     func perform() async throws -> some IntentResult {
-        // Use both print and Logger — Xcode console catches print, Console.app
-        // catches both. If neither shows up, the intent is not dispatching.
-        print("🟢 [CycleBudgetPageIntent] perform() invoked")
-        log.notice("perform() invoked")
-
-        let activities = Activity<BudgetActivityAttributes>.activities
-        print("🟢 [CycleBudgetPageIntent] Found \(activities.count) activities")
-        log.notice("Found \(activities.count, privacy: .public) activities")
-
-        for activity in activities {
+        for activity in Activity<BudgetActivityAttributes>.activities {
             var newState = activity.content.state
-            let oldPage = newState.pageIndex
-            // pageCount is dynamic (4 normally, 5 when a goal is featured).
-            newState.pageIndex = (oldPage + 1) % max(1, newState.pageCount)
-            print("🟢 [CycleBudgetPageIntent] Updating: page \(oldPage) → \(newState.pageIndex) (of \(newState.pageCount))")
-
+            newState.pageIndex = (newState.pageIndex + 1) % max(1, newState.pageCount)
             await activity.update(
                 ActivityContent(
                     state: newState,
@@ -48,7 +35,6 @@ struct CycleBudgetPageIntent: LiveActivityIntent {
                 )
             )
         }
-
         return .result()
     }
 }

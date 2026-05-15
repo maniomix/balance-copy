@@ -38,18 +38,22 @@ struct balanceApp: App {
         // with empty credentials and fails on every network call.
         AppConfig.shared.validate()
 
-        // If a previous run was force-quit, the system kept its Live Activity
-        // alive. Tear it down on launch so a closed app never has an island.
-        BudgetLiveActivityManager.shared.endAll()
+        // User-requested: "after fully closing the app dynamic island also
+        // should be killed". cleanupOrphans nukes ANY in-flight activity on
+        // launch — safety net for hard force-quits where willTerminate
+        // didn't fire. .active scenePhase will create a fresh one.
+        //
+        // Activity.request can't be called from init() — iOS 17.2+ throws
+        // ActivityAuthorizationError.visibility before the scene is active.
+        BudgetLiveActivityManager.shared.cleanupOrphans()
 
-        // Best-effort end on graceful termination — semaphore-blocked so we
-        // actually wait for Activity.end() to complete (within 2s budget).
+        // Graceful-quit cleanup. iOS gives ~5s on termination; we use 2s
+        // of that to block waiting for Activity.end() to complete.
         NotificationCenter.default.addObserver(
             forName: UIApplication.willTerminateNotification,
             object: nil,
             queue: .main
         ) { _ in
-            print("🔴 [balanceApp] willTerminate fired — ending Live Activities")
             BudgetLiveActivityManager.shared.endAllBlocking()
         }
     }
@@ -76,23 +80,37 @@ struct balanceApp: App {
     private func handleScenePhaseChange(_ phase: ScenePhase) {
         switch phase {
         case .active:
-            // Detect a stale session — e.g. user deleted on another device
-            // while this device was offline. Will sign out if the profile row
-            // is gone; ignores transient errors.
             Task { await AuthManager.shared.validateSessionStillValid() }
-            BudgetLiveActivityManager.shared.endAll()
-            return
+            guard liveActivityEnabled() else {
+                BudgetLiveActivityManager.shared.endAll()
+                return
+            }
+            // Defer heavy work — let iOS finish the morph-into-app animation
+            // before we burn main-actor cycles on Store.load + state rebuild.
+            // resetToFirstPage: true → every app foreground snaps back to
+            // the Budget page (user-requested).
+            Task { @MainActor in
+                let store = currentStore()
+                BudgetLiveActivityManager.shared.ensureStarted(store: store)
+                BudgetLiveActivityManager.shared.refresh(store: store, resetToFirstPage: true)
+            }
         case .background:
-            // Honor the user's Settings → Dynamic Island toggle.
-            guard UserDefaults.standard.object(forKey: "dynamicIsland.enabled") as? Bool ?? true else { return }
-            let userId = AuthManager.shared.currentUser?.uid
-            let store = Store.load(userId: userId)
-            // Only start if there's actually a budget set, otherwise the
-            // activity has nothing useful to show.
-            guard store.budget(for: store.selectedMonth) > 0 else { return }
-            BudgetLiveActivityManager.shared.start(store: store)
+            // Intentionally no start/refresh here. iOS 17.2+ throws
+            // `ActivityAuthorizationError.visibility` for `Activity.request`
+            // calls from background — start is gated to `.active` only.
+            // Persistent activities (already alive from a prior `.active`)
+            // morph correctly on the way out without any action from us.
+            break
         default:
             break
         }
+    }
+
+    private func liveActivityEnabled() -> Bool {
+        UserDefaults.standard.object(forKey: "dynamicIsland.enabled") as? Bool ?? true
+    }
+
+    private func currentStore() -> Store {
+        Store.load(userId: AuthManager.shared.currentUser?.uid)
     }
 }

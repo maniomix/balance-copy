@@ -4,14 +4,14 @@ import Foundation
 /// Live Activity attributes for the monthly-budget Dynamic Island.
 ///
 /// IMPORTANT: this file MUST be a member of BOTH the main `balance` target
-/// AND the widget extension target. Select the file in Xcode → File Inspector
-/// → Target Membership → check both boxes.
+/// AND the widget extension target. The explicit `BudgetActivityAttributes.swift`
+/// exception entry in `project.pbxproj` carries the dual membership.
 struct BudgetActivityAttributes: ActivityAttributes {
     public struct ContentState: Codable, Hashable {
         // MARK: - Page navigation
 
         /// Which information page is shown in the expanded view (0...3).
-        /// Cycled by `CycleBudgetPageIntent`.
+        /// 0 Budget, 1 Today, 2 This Week, 3 Top Category.
         var pageIndex: Int
 
         // MARK: - Page 0: Budget
@@ -29,11 +29,17 @@ struct BudgetActivityAttributes: ActivityAttributes {
         var todaySpentCents: Int
         /// Number of transactions logged today.
         var todayTxCount: Int
+        /// 24 hourly buckets of today's expenses (cents). Index = hour-of-day.
+        /// Optional so older Codable payloads still decode after the schema
+        /// bump from v1 (no sparkline) to v2.
+        var todaySparkline: [Int]?
 
         // MARK: - Page 2: This week
 
         /// Total spent in the last 7 days (cents).
         var weekSpentCents: Int
+        /// 7 daily buckets (cents) — index 0 = 6 days ago, index 6 = today.
+        var weekDailyBuckets: [Int]?
 
         // MARK: - Page 3: Top category
 
@@ -41,55 +47,23 @@ struct BudgetActivityAttributes: ActivityAttributes {
         var topCategoryTitle: String?
         var topCategoryIcon: String?
         var topCategoryCents: Int
+        /// Pre-computed share of total month spending (0...1). Avoids divide
+        /// math in the widget render path.
+        var topCategoryShareOfMonth: Double?
 
         // MARK: - Shared chrome
 
         /// Currency symbol shown in all amounts ("€", "$", ...).
         var currencySymbol: String
-        /// Most recent transaction summary, e.g. "Lidl · €15".
+
+        /// Most recent expense (this month) — used in the Today page bottom
+        /// row for context. Optional so older Codable payloads decode.
         var lastTransactionTitle: String?
-        /// SF Symbol for the most recent transaction's category.
         var lastTransactionIcon: String?
-
-        /// Label for the "Today" page hero. Defaults to "today" when
-        /// selectedMonth is the current real month; otherwise the actual day
-        /// inside that month, e.g. "Feb 28". Optional so older Codable
-        /// payloads from in-flight activities still decode.
-        var todayLabel: String?
-
-        /// True when the activity is showing data from a past or future month
-        /// (i.e. `selectedMonth != currentMonth`). Lets the UI reframe labels
-        /// honestly — e.g. "7 DAYS" → "last 7 of Feb".
-        var isHistorical: Bool?
-
-        // MARK: - Page 4: Goal (only shown when user has an incomplete goal)
-
-        /// Name of the most-relevant incomplete goal (highest progress %).
-        /// nil when the user has no incomplete goals — page 4 hides itself.
-        var goalName: String?
-        var goalIcon: String?
-        var goalCurrentCents: Int?
-        var goalTargetCents: Int?
-
-        /// Effective number of pages: 4 normally, 5 when a goal is present.
-        var pageCount: Int { (goalTargetCents ?? 0) > 0 ? 5 : 4 }
-
-        // MARK: - Alert state
-
-        /// Set on first activity start in a month where the user has crossed
-        /// 100% of their budget. Persists for the lifetime of that activity
-        /// (so the badge stays visible until the user reopens the app), but
-        /// won't re-fire until the next month. Optional for back-compat.
-        var isOverBudgetAlert: Bool?
-
-        var goalPercent: Double {
-            guard let target = goalTargetCents, target > 0,
-                  let current = goalCurrentCents else { return 0 }
-            return min(1.0, Double(current) / Double(target))
-        }
 
         // MARK: - Derived
 
+        var pageCount: Int { 4 }
         var remainingCents: Int { max(0, totalCents - spentCents) }
 
         var percentSpent: Double {
@@ -105,8 +79,11 @@ struct BudgetActivityAttributes: ActivityAttributes {
     /// Month label, e.g. "April 2026". Static for the activity's lifetime.
     var monthLabel: String
 
-    /// Maximum possible page count — used by intents that need a hard cap.
-    /// The *effective* count for any given activity comes from
-    /// `ContentState.pageCount`.
-    static let maxPageCount: Int = 5
+    /// Schema version. v1 = goal page + alert. v2 = sparkline build.
+    /// v3 = hero+gauge+icon-row redesign. v4 = enlarged hero + 90pt page box.
+    /// v5 = compact "K/M" formatter. v6 = heavy middle padding (reverted).
+    /// v7 = uniform 10pt inset on header AND body so the whole DI content
+    /// reads as one padded block.
+    /// cleanupOrphans ends any activity below the current version.
+    var schemaVersion: Int = 7
 }

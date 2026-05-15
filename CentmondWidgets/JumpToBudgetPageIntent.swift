@@ -3,7 +3,7 @@ import AppIntents
 import Foundation
 
 /// Live Activity intent — jumps the expanded view straight to a specific page.
-/// Bound to each tappable dot in `PageDots`.
+/// Bound to each tappable dot in `PageRail`.
 ///
 /// MUST be a member of BOTH the `balance` target AND the
 /// `CentmondWidgetsExtension` target.
@@ -26,12 +26,12 @@ struct JumpToBudgetPageIntent: LiveActivityIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        print("🟢 [JumpToBudgetPageIntent] perform() invoked → page \(page)")
-
         for activity in Activity<BudgetActivityAttributes>.activities {
             var newState = activity.content.state
-            // Clamp against this activity's own dynamic page count.
             let target = max(0, min(newState.pageCount - 1, page))
+            // Skip the activity.update round-trip if nothing changed —
+            // saves a system call on accidental re-taps of the active dot.
+            guard target != newState.pageIndex else { continue }
             newState.pageIndex = target
             await activity.update(
                 ActivityContent(
@@ -40,7 +40,6 @@ struct JumpToBudgetPageIntent: LiveActivityIntent {
                 )
             )
         }
-
         return .result()
     }
 }

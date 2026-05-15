@@ -26,7 +26,7 @@ struct DynamicIslandSetupSheet: View {
                             requirementRow(
                                 icon: "switch.2",
                                 title: "Toggle enabled above",
-                                body: "If you turned it off, no activity will start when you background the app.",
+                                body: "If you turned it off, no activity will start.",
                                 isLast: true
                             )
                         }
@@ -38,8 +38,8 @@ struct DynamicIslandSetupSheet: View {
 
                             useRow(
                                 icon: "1.circle.fill",
-                                title: "Background the app",
-                                body: "Swipe up to home or switch to another app. The Dynamic Island appears with your budget."
+                                title: "Open Centmond once",
+                                body: "After you set a monthly budget, the island starts and stays available — it morphs into the app and back as you switch."
                             )
                             useRow(
                                 icon: "2.circle.fill",
@@ -53,8 +53,8 @@ struct DynamicIslandSetupSheet: View {
                             )
                             useRow(
                                 icon: "4.circle.fill",
-                                title: "Tap Next to switch pages",
-                                body: "The expanded view rotates through 4 information pages. Use the Next ›  button on the right.",
+                                title: "Switch pages two ways",
+                                body: "Tap Next ›  at the top-right to cycle, or tap a dot at the bottom to jump straight to that page.",
                                 isLast: true
                             )
                         }
@@ -64,10 +64,10 @@ struct DynamicIslandSetupSheet: View {
                         VStack(alignment: .leading, spacing: 14) {
                             sectionTitle("The 4 pages", icon: "rectangle.stack.fill", tint: DS.Colors.warning)
 
-                            pageRow(icon: "chart.pie.fill",   tint: DS.Colors.accent,   title: "Budget",       body: "Remaining (or amount over), progress bar, days left, spent vs total.")
-                            pageRow(icon: "sun.max.fill",     tint: DS.Colors.warning,  title: "Today",        body: "Spent today and how many transactions you logged.")
-                            pageRow(icon: "calendar",         tint: DS.Colors.positive, title: "This Week",    body: "Total for the last 7 days plus a daily average.")
-                            pageRow(icon: "trophy.fill",      tint: DS.Colors.danger,   title: "Top Category", body: "Biggest spending category this month.", isLast: true)
+                            pageRow(icon: "chart.pie.fill",   tint: DS.Colors.accent,   title: "Budget",       body: "Remaining amount with a circular gauge — fills as the month progresses.")
+                            pageRow(icon: "sun.max.fill",     tint: DS.Colors.warning,  title: "Today",        body: "Spent today plus an hourly sparkline showing when it landed.")
+                            pageRow(icon: "calendar",         tint: DS.Colors.positive, title: "This Week",    body: "Total for the last 7 days with daily bars — today highlighted.")
+                            pageRow(icon: "trophy.fill",      tint: DS.Colors.danger,   title: "Top Category", body: "Biggest spending category and its share of the month, as a donut.", isLast: true)
                         }
                     }
 
@@ -77,10 +77,29 @@ struct DynamicIslandSetupSheet: View {
 
                             bullet("The activity follows the month you're browsing in the app — not always the calendar month.")
                             bullet("Color goes green → orange (≥85%) → red (over budget).")
-                            bullet("Auto-ends when you reopen Centmond. Backgrounding starts a fresh one.")
+                            bullet("Stays alive across foreground and background — iOS plays the morph back into the island when you reopen Centmond.")
                             bullet("Adding a transaction via Back Tap automatically refreshes the numbers.")
                         }
                     }
+
+                    Button {
+                        BudgetLiveActivityManager.shared.endAll()
+                    } label: {
+                        HStack {
+                            Image(systemName: "stop.circle.fill")
+                                .font(.system(size: 16, weight: .semibold))
+                            Text("Stop Live Activity")
+                                .font(.system(size: 14, weight: .semibold))
+                        }
+                        .foregroundStyle(DS.Colors.danger)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(DS.Colors.danger.opacity(0.12))
+                        )
+                    }
+                    .buttonStyle(.plain)
 
                     Color.clear.frame(height: 24)
                 }

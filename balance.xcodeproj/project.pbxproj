@@ -97,6 +97,7 @@
 			membershipExceptions = (
 				BudgetActivityAttributes.swift,
 				CycleBudgetPageIntent.swift,
+				JumpToBudgetPageIntent.swift,
 			);
 			target = 3C4B992C2F047DB8003DAE43 /* balance */;
 		};
